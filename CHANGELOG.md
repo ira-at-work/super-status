@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.2.1 — 18/07/2026
+
+### Fixed
+- **`doctor.sh` now repairs a missing `refreshInterval`** instead of exiting
+  "Nothing to do" whenever the `statusLine.command` already pointed at
+  super-status. Without `refreshInterval`, the script only re-runs on
+  transcript events — so the file-based `Orca:`/`Master:` line froze for the
+  entire time the orchestrator session sat blocked on a tool call waiting for
+  its agents, which is exactly the window that line exists to cover. Installs
+  patched before the 2.1.0 `refreshInterval` recommendation (or hand-edited
+  settings) were stuck in that state with no repair path; `doctor.sh` now
+  detects the correct-command/missing-interval case and adds the default.
+
 ## 2.2.0 — 18/07/2026
 
 ### Changed

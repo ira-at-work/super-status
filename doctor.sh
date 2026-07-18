@@ -61,10 +61,18 @@ if [ ! -f "$SETTINGS" ]; then
 fi
 
 current_cmd=$(jq -r '.statusLine.command // empty' "$SETTINGS" 2>/dev/null)
+current_interval=$(jq -r '.statusLine.refreshInterval // empty' "$SETTINGS" 2>/dev/null)
+
+if [ "$current_cmd" = "$EXPECTED_CMD" ] && [ -n "$current_interval" ]; then
+    echo "✓ settings.json already points at super-status (refreshInterval: ${current_interval}s). Nothing to do."
+    exit 0
+fi
 
 if [ "$current_cmd" = "$EXPECTED_CMD" ]; then
-    echo "✓ settings.json already points at super-status. Nothing to do."
-    exit 0
+    # Without refreshInterval the script only re-runs on transcript events, so
+    # the file-based Orca:/Master: line freezes the whole time the session sits
+    # blocked on a tool call — the segment's main use case.
+    echo "⚠ statusLine wiring is correct but refreshInterval is missing — adding it."
 fi
 
 cp "$SETTINGS" "${SETTINGS}.bak.$(date +%s)"
