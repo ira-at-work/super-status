@@ -89,7 +89,7 @@ super-status prints a compact, visually hierarchical layout: one identity line, 
 
 ```
 ◆ Claude Sonnet 4.6 | repo:master | +45 -12 | v2.1.90
-Sub ▮▮▮▮▮▮▪▪▪▪ 62% Reset 14d | 5h ▮▮▮▮▮▮▮▮▮▪ 99% Reset 2h30m | 3d ▮▮▮▮▪▪▪▪▪▪ 44% Reset 3d14h10m [21/07/2026]
+Sub ▮▮▮▮▮▮▪▪▪▪ 62% Reset 14d (08/08) | 5h ▮▮▮▮▮▮▮▮▮▪ 99% Reset 2h30m (16:30) | 3d ▮▮▮▮▪▪▪▪▪▪ 44% Reset 3d14h10m (21/07)
 Ctx ▮▮▮▮▪▪▪▪▪▪ 42% 84k/200k | Cache 71% | Cost est. $1.23 | Tok 152.3k/45.2k
 LOC ~14.2k | Session 1h30m | Thinking 1m38s | Eff A(100) | Calls 9 (Bash 1, Read 3, Code 3, Skill 1, Other 1)
 ```
@@ -133,7 +133,7 @@ LOC ~14.2k | Session 1h30m | Thinking 1m38s | Eff A(100) | Calls 12 (Bash 3, Rea
 
 **Colors carry meaning, not decoration:** green = healthy / well within limits (the same accent family as the model name), orange = approaching a threshold, red = at/near the limit, and muted gray = purely informational (version, cache %, token counts, the whole diagnostics line). Warning colors are never used on non-actionable fields. Every bar (`Sub`, `5h`, `Nd`, `Ctx`, `Bal`) is colored to match its own usage percentage; the thresholds are configurable (see **Configuration**).
 
-**Reset strings:** each reset is a bare countdown (`Reset 2h30m`) — no redundant clock time. Only the weekly reset appends its absolute `dd/MM/yyyy` date, and only once it's more than a day out (`Reset 3d14h10m [21/07/2026]`), since that's when the landing day stops being obvious.
+**Reset strings:** each reset is a relative countdown followed by an absolute "when" marker in parentheses, so a glance shows both how long and when. The marker is a clock time `(HH:MM)` when the reset lands on today's date (`Reset 2h30m (16:30)`), and a date `(dd/MM)` when it lands on a later day (`Reset 3d14h10m (21/07)`). Every reset — `Sub`, `5h`, and the weekly window — carries one.
 
 ## Configuration
 
@@ -211,7 +211,7 @@ A malformed config never breaks the render — defaults are used and a one-line 
 
 ```
 ◆ Claude Sonnet 4.6 | repo:master | Ctx ▮▮▮▮▪▪▪▪▪▪ 42% 84k/200k
-Sub ▮▮▮▮▮▮▪▪▪▪ 62% Reset 14d | 5h ▮▮▮▮▮▮▮▮▮▪ 99% Reset 2h30m | 3d ▮▮▮▮▪▪▪▪▪▪ 44% Reset 3d14h10m [21/07/2026] | Cost est. $1.23
+Sub ▮▮▮▮▮▮▪▪▪▪ 62% Reset 14d (08/08) | 5h ▮▮▮▮▮▮▮▮▮▪ 99% Reset 2h30m (16:30) | 3d ▮▮▮▮▪▪▪▪▪▪ 44% Reset 3d14h10m (21/07) | Cost est. $1.23
 Activity: ◐ Edit: auth.ts | ✓ Read ×3 | ✓ Grep ×2
 ```
 
@@ -266,9 +266,9 @@ To make the time fields update continuously instead of only on those events, add
 
 | Field | Example                                | Meaning                                                                                                                                                                                                                              |
 | ----- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `Sub` | `▮▮▮▮▮▮▪▪▪▪ 62% Reset 14d`              | How far through your current monthly billing cycle you are, with days remaining until renewal (rounded up). Cycles are true calendar months from your declared start date (14/07 renews on 14/08 — 28–31 days depending on the month; a start day missing from a shorter month, e.g. the 31st, clamps to that month's last day). Green early in the cycle, orange mid-cycle, red in the final ~2 days — informational progress, not a rate-limit warning. Requires the one-time setup in **Subscription tracking setup** below; until then a bold red reminder line appears at the very top instead |
-| `5h`  | `▮▮▮▮▮▮▮▮▮▪ 99% Reset 2h30m`            | % of your rolling 5-hour Anthropic plan limit used, a usage bar colored to match, and the countdown until reset                                                                                                                       |
-| `Nd`  | `3d ▮▮▮▮▪▪▪▪▪▪ 44% Reset 3d14h10m [21/07/2026]` | % of your rolling weekly Anthropic plan limit used. `N` is computed live — the actual number of days from now until the reset (rounded up) — not hardcoded to 7, since this window is rolling and doesn't always land exactly a week out. The absolute `dd/MM/yyyy` reset date is appended only when the reset is more than a day out |
+| `Sub` | `▮▮▮▮▮▮▪▪▪▪ 62% Reset 14d (08/08)`      | How far through your current monthly billing cycle you are, with days remaining until renewal (rounded up) and the renewal `(dd/MM)` in parens. Cycles are true calendar months from your declared start date (14/07 renews on 14/08 — 28–31 days depending on the month; a start day missing from a shorter month, e.g. the 31st, clamps to that month's last day). Green early in the cycle, orange mid-cycle, red in the final ~2 days — informational progress, not a rate-limit warning. Requires the one-time setup in **Subscription tracking setup** below; until then a bold red reminder line appears at the very top instead |
+| `5h`  | `▮▮▮▮▮▮▮▮▮▪ 99% Reset 2h30m (16:30)`    | % of your rolling 5-hour Anthropic plan limit used, a usage bar colored to match, the countdown until reset, and the reset's absolute "when" marker in parens                                                                          |
+| `Nd`  | `3d ▮▮▮▮▪▪▪▪▪▪ 44% Reset 3d14h10m (21/07)` | % of your rolling weekly Anthropic plan limit used. `N` is computed live — the actual number of days from now until the reset (rounded up) — not hardcoded to 7, since this window is rolling and doesn't always land exactly a week out. Like every reset, it carries an absolute "when" marker in parens: a clock time `(HH:MM)` if it lands today, a date `(dd/MM)` otherwise |
 | `Bal` | `▮▮▪▪▪▪▪▪▪▪ 17% $16.58/$20.00`          | (OpenRouter mode only) live remaining/total credit balance from OpenRouter's `/api/v1/credits` endpoint, bar and % colored to match usage                                                                                             |
 
 Colors: green = healthy, orange = getting close, red = at/near the limit (the weekly window uses tighter thresholds than 5-hour, since a blown weekly quota is more disruptive than a 5-hour one that resets soon — both are configurable). A percentage above 100% can happen (see **Live updates** above) — it's shown as-is rather than clamped, though the bar itself always reads as full.
@@ -349,7 +349,7 @@ SUBSCRIPTION START DATE IS MISSING - ADD IT TO THE CLAUDE.MD: "subscription_star
 **Once a valid date is found**, the warning disappears and the `Sub` bar renders at the start of the usage-bar line:
 
 ```
-Sub ▮▮▮▮▮▮▪▪▪▪ 62% Reset 14d
+Sub ▮▮▮▮▮▮▪▪▪▪ 62% Reset 14d (08/08)
 ```
 
 This whole feature is subscription-mode only — API-key and OpenRouter users have no monthly cycle to track, so for them there's no warning, no bar, and no CLAUDE.md reads at all.

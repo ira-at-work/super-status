@@ -146,8 +146,10 @@ SUBSCRIPTION_PAYLOAD='{"model":{"display_name":"Opus"},"workspace":{"project_dir
     run_statusline "$SUBSCRIPTION_PAYLOAD"
     plain=$(strip_ansi "$output")
     [[ "$plain" == *"5h "*" 63% Reset "* ]]
-    # weekly reset is >1 day out, so it carries the absolute dd/MM/yyyy date
-    [[ "$plain" == *" 44% Reset "*"["*"/20"*"]"* ]]
+    # both resets carry an absolute "when" marker in parens; these fixtures land
+    # on a later day, so the marker is a dd/MM date rather than an HH:MM time
+    [[ "$plain" == *"5h "*" 63% Reset "*"("??"/"??")"* ]]
+    [[ "$plain" == *" 44% Reset "*"("??"/"??")"* ]]
     [[ "$plain" == *"SUBSCRIPTION START DATE IS MISSING"* ]]
 }
 

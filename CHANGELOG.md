@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.3.0 — 25/07/2026
+
+### Changed
+- **Every reset now shows an absolute "when" marker in parens**, not just the
+  weekly window. `Sub`, `5h`, and the weekly reset each append a marker after
+  their countdown: a clock time `(HH:MM)` when the reset lands on today's date,
+  a date `(dd/MM)` when it lands on a later day (e.g. `Reset 2h30m (16:30)`,
+  `Reset 3d14h10m (21/07)`). Previously only the weekly reset carried an
+  absolute date, formatted `[dd/MM/yyyy]` and shown only when more than a day
+  out. The new marker is shorter (no year), consistent across all three resets,
+  and answers "when, exactly?" at a glance regardless of how far out the reset
+  is.
+
 ## 2.2.1 — 18/07/2026
 
 ### Fixed

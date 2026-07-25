@@ -250,6 +250,23 @@ format_date_epoch() {
     date -d "@${epoch%.*}" +"%d/%m/%Y" 2>/dev/null || date -r "${epoch%.*}" +"%d/%m/%Y" 2>/dev/null || echo ""
 }
 
+# Absolute "when" marker paired with a relative reset countdown: "HH:MM" when the
+# reset lands on today's calendar date (a clock time is enough), "dd/MM" when it
+# lands on a later day (the countdown alone no longer makes the day obvious).
+# Same BSD/GNU date dual-command fallback as format_date_epoch.
+format_reset_marker() {
+    local epoch="$1"
+    is_num "$epoch" || { echo ""; return; }
+    local target="${epoch%.*}" target_day today
+    target_day=$(date -d "@${target}" +"%Y%m%d" 2>/dev/null || date -r "${target}" +"%Y%m%d" 2>/dev/null) || return
+    today=$(date +"%Y%m%d")
+    if [ "$target_day" = "$today" ]; then
+        date -d "@${target}" +"%H:%M" 2>/dev/null || date -r "${target}" +"%H:%M" 2>/dev/null || echo ""
+    else
+        date -d "@${target}" +"%d/%m" 2>/dev/null || date -r "${target}" +"%d/%m" 2>/dev/null || echo ""
+    fi
+}
+
 # dd/MM/yyyy -> epoch seconds; prints nothing on invalid input.
 # Not `date -d "14/07/2026"`: BSD date has no GNU-style -d, and GNU date reads
 # slash dates as MM/DD — so a BSD/GNU dual-command fallback on an unambiguous
@@ -1203,7 +1220,8 @@ if [ "$IS_SUBSCRIPTION" -eq 1 ] && [ "$cfg_show_subscription" = "1" ]; then
                 else _sub_color="$GREEN"
                 fi
                 _sub_bar=$(render_bar "$_sub_pct" "$_sub_color")
-                subscription_value="${_sub_bar} ${_sub_color}${_sub_pct}%${RESET} $(muted "${L_RESET} ${_sub_days_left}d")"
+                _sub_reset_marker=$(format_reset_marker "$_cycle_end")
+                subscription_value="${_sub_bar} ${_sub_color}${_sub_pct}%${RESET} $(muted "${L_RESET} ${_sub_days_left}d${_sub_reset_marker:+ (${_sub_reset_marker})}")"
             fi
             ;;
     esac
@@ -1292,10 +1310,9 @@ seg_subscription="$subscription_value"
 
 # Sessions: 5h / Nd usage (Nd = actual days remaining until the weekly window
 # resets, computed live — not hardcoded to "7d", since it's a rolling window).
-# Bars are colored to match their usage color (green/orange/red). Reset
-# strings are the bare countdown; only the weekly reset appends its absolute
-# date, and only once it's more than a day out (a same-day reset's countdown
-# already says everything).
+# Bars are colored to match their usage color (green/orange/red). Each reset
+# is the relative countdown plus an absolute "when" marker in parens: a clock
+# time (HH:MM) when it lands today, a date (dd/MM) when it lands on a later day.
 seg_sessions=""
 if [ "$IS_SUBSCRIPTION" -eq 1 ] && [ "$cfg_show_sessions" = "1" ]; then
     five_pct=${five_util_probe%.*}; is_num "$five_pct" || five_pct=0
@@ -1309,7 +1326,6 @@ if [ "$IS_SUBSCRIPTION" -eq 1 ] && [ "$cfg_show_sessions" = "1" ]; then
 
     five_reset_countdown=$(fmt_countdown_epoch "$five_reset")
     seven_reset_countdown=$(fmt_countdown_epoch "$seven_reset")
-    seven_reset_date=$(format_date_epoch "$seven_reset")
 
     seven_days_label="7d"
     _seven_days_left=""
@@ -1324,15 +1340,15 @@ if [ "$IS_SUBSCRIPTION" -eq 1 ] && [ "$cfg_show_sessions" = "1" ]; then
     fi
 
     seg_sessions="${C_LABEL}${L_FIVE_HOUR}${RESET} ${five_bar} ${five_color}${five_pct}%${RESET}"
-    [ -n "$five_reset_countdown" ] && seg_sessions="${seg_sessions} $(muted "${L_RESET} ${five_reset_countdown}")"
+    if [ -n "$five_reset_countdown" ]; then
+        five_reset_marker=$(format_reset_marker "$five_reset")
+        seg_sessions="${seg_sessions} $(muted "${L_RESET} ${five_reset_countdown}${five_reset_marker:+ (${five_reset_marker})}")"
+    fi
 
     seg_sessions="${seg_sessions} $(muted "|") ${C_LABEL}${seven_days_label}${RESET} ${seven_bar} ${seven_color}${seven_pct}%${RESET}"
     if [ -n "$seven_reset_countdown" ]; then
-        _seven_reset="${L_RESET} ${seven_reset_countdown}"
-        if [ -n "$seven_reset_date" ] && is_num "$_seven_days_left" && [ "$_seven_days_left" -gt 1 ]; then
-            _seven_reset="${_seven_reset} [${seven_reset_date}]"
-        fi
-        seg_sessions="${seg_sessions} $(muted "${_seven_reset}")"
+        seven_reset_marker=$(format_reset_marker "$seven_reset")
+        seg_sessions="${seg_sessions} $(muted "${L_RESET} ${seven_reset_countdown}${seven_reset_marker:+ (${seven_reset_marker})}")"
     fi
 fi
 
