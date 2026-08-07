@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.4.0 — 07/08/2026
+
+### Fixed
+- **The `5h` reset marker now always shows a clock time `(HH:MM)`**, even when
+  the reset lands after midnight. The 5-hour window is always under five hours
+  away, so a `(dd/MM)` date there was misleading — it read as days away rather
+  than hours (e.g. `Reset 4h52m (08/08)` implied a whole day out for a reset
+  barely four hours away). The weekly and subscription markers are unchanged:
+  they still show `(HH:MM)` for today and `(dd/MM)` for a later day.
+
+### Added
+- **`/super-status:subscribe`** — renewal command that resets
+  `subscription_start_date` to today (or a `dd/MM/yyyy` argument) so the `Sub`
+  cycle restarts from the renewal day, rewriting the first `CLAUDE.md` that
+  declares the key (project-local first, then global) instead of hand-editing.
+
 ## 2.3.0 — 25/07/2026
 
 ### Changed

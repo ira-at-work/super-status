@@ -62,6 +62,22 @@ SUBSCRIPTION_PAYLOAD='{"model":{"display_name":"Opus"},"workspace":{"project_dir
     [ "$(days_in_month 2 2000)" = "29" ]
 }
 
+@test "format_reset_marker clock mode shows HH:MM even when the reset is on a later day" {
+    # 4h from now, deliberately crossing into tomorrow so day != today.
+    tomorrow_epoch=$(( $(date +%s) + 4 * 3600 ))
+    while [ "$(date -r "$tomorrow_epoch" +%Y%m%d 2>/dev/null || date -d "@$tomorrow_epoch" +%Y%m%d)" = "$(date +%Y%m%d)" ]; do
+        tomorrow_epoch=$(( tomorrow_epoch + 3600 ))
+    done
+    marker=$(format_reset_marker "$tomorrow_epoch" clock)
+    [[ "$marker" =~ ^[0-2][0-9]:[0-5][0-9]$ ]]
+}
+
+@test "format_reset_marker default mode shows dd/MM for a later day" {
+    next_week=$(( $(date +%s) + 7 * 86400 ))
+    marker=$(format_reset_marker "$next_week")
+    [[ "$marker" =~ ^[0-3][0-9]/[0-1][0-9]$ ]]
+}
+
 # --- unit: formatting -------------------------------------------------------
 
 @test "fmt_tokens_k formats thousands with one decimal and passes small values through" {

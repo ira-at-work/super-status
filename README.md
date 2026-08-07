@@ -338,6 +338,18 @@ The `Sub` bar tracks how far you are through your current monthly billing cycle.
 - The HTML-comment wrapper is recommended so the line doesn't clutter the rendered doc, but it isn't required — the key is matched anywhere in the file (comment, code block, or plain text).
 - A project-local `CLAUDE.md` takes priority over the global one, so you can override per project if needed.
 
+**Renewing (each new billing cycle):** after you purchase/renew, run the plugin command to reset the start date to today so the `Sub` cycle restarts from the renewal day — no hand-editing:
+
+```
+/super-status:subscribe
+```
+
+It rewrites the existing `subscription_start_date` in the first `CLAUDE.md` that has one (project-local first, then global), or adds it to `~/.claude/CLAUDE.md` if neither does. Pass a `dd/MM/yyyy` date to backdate it (e.g. you renewed yesterday):
+
+```
+/super-status:subscribe 06/08/2026
+```
+
 **If the key is missing from both files**, a bold red reminder appears as the very first line of the statusline until you add it:
 
 ```

@@ -253,11 +253,19 @@ format_date_epoch() {
 # Absolute "when" marker paired with a relative reset countdown: "HH:MM" when the
 # reset lands on today's calendar date (a clock time is enough), "dd/MM" when it
 # lands on a later day (the countdown alone no longer makes the day obvious).
+# A second "clock" argument forces "HH:MM" regardless of day — used for the 5h
+# window, which is always under five hours away, so the wall-clock reset time is
+# the meaningful marker even when it crosses midnight (a "dd/MM" date there is
+# misleading: it reads as days away, not hours).
 # Same BSD/GNU date dual-command fallback as format_date_epoch.
 format_reset_marker() {
-    local epoch="$1"
+    local epoch="$1" mode="$2"
     is_num "$epoch" || { echo ""; return; }
     local target="${epoch%.*}" target_day today
+    if [ "$mode" = "clock" ]; then
+        date -d "@${target}" +"%H:%M" 2>/dev/null || date -r "${target}" +"%H:%M" 2>/dev/null || echo ""
+        return
+    fi
     target_day=$(date -d "@${target}" +"%Y%m%d" 2>/dev/null || date -r "${target}" +"%Y%m%d" 2>/dev/null) || return
     today=$(date +"%Y%m%d")
     if [ "$target_day" = "$today" ]; then
@@ -1311,8 +1319,9 @@ seg_subscription="$subscription_value"
 # Sessions: 5h / Nd usage (Nd = actual days remaining until the weekly window
 # resets, computed live — not hardcoded to "7d", since it's a rolling window).
 # Bars are colored to match their usage color (green/orange/red). Each reset
-# is the relative countdown plus an absolute "when" marker in parens: a clock
-# time (HH:MM) when it lands today, a date (dd/MM) when it lands on a later day.
+# is the relative countdown plus an absolute "when" marker in parens: the 5h
+# window always shows a clock time (HH:MM) since it's always hours away; the
+# weekly window shows HH:MM when it lands today, else a date (dd/MM).
 seg_sessions=""
 if [ "$IS_SUBSCRIPTION" -eq 1 ] && [ "$cfg_show_sessions" = "1" ]; then
     five_pct=${five_util_probe%.*}; is_num "$five_pct" || five_pct=0
@@ -1341,7 +1350,7 @@ if [ "$IS_SUBSCRIPTION" -eq 1 ] && [ "$cfg_show_sessions" = "1" ]; then
 
     seg_sessions="${C_LABEL}${L_FIVE_HOUR}${RESET} ${five_bar} ${five_color}${five_pct}%${RESET}"
     if [ -n "$five_reset_countdown" ]; then
-        five_reset_marker=$(format_reset_marker "$five_reset")
+        five_reset_marker=$(format_reset_marker "$five_reset" clock)
         seg_sessions="${seg_sessions} $(muted "${L_RESET} ${five_reset_countdown}${five_reset_marker:+ (${five_reset_marker})}")"
     fi
 
