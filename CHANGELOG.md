@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.4.1 — 14/08/2026
+
+### Fixed
+- **The `Sub` bar no longer rolls into a new cycle at the renewal boundary.**
+  It previously advanced through calendar months until it found the cycle
+  containing "now", so the moment a paid month elapsed it snapped back to `0%`
+  for the next cycle — even though renewal isn't automatic (no billing date is
+  exposed in the stdin JSON). It now tracks a single cycle anchored to
+  `subscription_start_date` and pins at `100%` once that month elapses, staying
+  there until `/super-status:subscribe` bumps the date. A full red bar now
+  signals "renewal due" instead of a misleading fresh `0%`.
+
 ## 2.4.0 — 07/08/2026
 
 ### Fixed

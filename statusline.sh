@@ -1203,17 +1203,14 @@ if [ "$IS_SUBSCRIPTION" -eq 1 ] && [ "$cfg_show_subscription" = "1" ]; then
             _sub_rest="${SUBSCRIPTION_START_RAW#*/}"
             _sub_month="${_sub_rest%%/*}"; _sub_year="${_sub_rest#*/}"
             _sub_now=$(date +%s)
-            # Whole-month distance gives a starting guess one cycle early;
-            # walking forward from there keeps the loop to a couple of
-            # add_months_epoch calls no matter how old the start date is.
-            _sub_n=$(( ($(date +%Y) * 12 + 10#$(date +%m)) - (10#$_sub_year * 12 + 10#$_sub_month) - 1 ))
-            [ "$_sub_n" -lt 0 ] && _sub_n=0
-            _cycle_end=$(add_months_epoch "$_sub_day" "$_sub_month" "$_sub_year" $(( _sub_n + 1 )))
-            while [ -n "$_cycle_end" ] && [ "$_cycle_end" -le "$_sub_now" ]; do
-                _sub_n=$(( _sub_n + 1 ))
-                _cycle_end=$(add_months_epoch "$_sub_day" "$_sub_month" "$_sub_year" $(( _sub_n + 1 )))
-            done
-            _cycle_start=$(add_months_epoch "$_sub_day" "$_sub_month" "$_sub_year" "$_sub_n")
+            # Single cycle anchored to the declared start date: start_date ..
+            # start_date + 1 calendar month. Deliberately does NOT roll forward
+            # to a later cycle — renewal isn't automatic (no billing date in the
+            # stdin JSON), so once the paid month elapses the bar stays pinned at
+            # 100% ("renewal due") until /super-status:subscribe bumps the const,
+            # rather than snapping back to 0% for a cycle that wasn't paid for.
+            _cycle_start=$(add_months_epoch "$_sub_day" "$_sub_month" "$_sub_year" 0)
+            _cycle_end=$(add_months_epoch "$_sub_day" "$_sub_month" "$_sub_year" 1)
             if is_num "$_cycle_start" && is_num "$_cycle_end" && [ "$_cycle_end" -gt "$_cycle_start" ]; then
                 _sub_pct=$(( (_sub_now - _cycle_start) * 100 / (_cycle_end - _cycle_start) ))
                 [ "$_sub_pct" -lt 0 ] && _sub_pct=0
