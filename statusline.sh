@@ -45,6 +45,21 @@ cfg_path_levels=1
 cfg_max_width=0
 cfg_context_value="both"
 cfg_lines=""
+# Context % is measured against this window when it's a positive token count
+# (matches the number `/context` shows, which is the auto-compact threshold, not
+# the full model window). 0 = disabled, keep measuring against the full window.
+cfg_auto_compact_window=0
+# model_source picks where the model NAME comes from behind a proxy:
+#   stdin      — always trust the stdin display_name (default)
+#   transcript — read the real model id from the session transcript
+#   auto       — use the transcript only when a non-Anthropic backend is detected
+cfg_model_source="stdin"
+# Optional local usage snapshot: a JSON file another tool writes with the same
+# shape as stdin's `rate_limits` (plus an optional `model_scoped` map). When
+# stdin omits rate_limits, a snapshot fresher than external_usage_max_age
+# seconds fills the 5h/Nd bars. 0 path = disabled.
+cfg_external_usage_path=""
+cfg_external_usage_max_age=1800
 
 cfg_show_model=1
 cfg_show_repo=1
@@ -208,6 +223,37 @@ fmt_tokens_k() {
     else
         echo "$n"
     fi
+}
+
+# Turn a raw model id into a readable display name:
+#   claude-sonnet-4-6-20250101 -> Claude Sonnet 4.6
+#   claude-3-5-haiku-20241022  -> Claude 3.5 Haiku
+# Strips a trailing yyyymmdd date, drops any vendor "provider." prefix (Bedrock/
+# Vertex prefix the id), joins numeric segments with a dot, and Title-Cases the
+# rest. An id that doesn't look like a Claude model is returned unchanged.
+humanize_model_id() {
+    local raw="$1" id part out=""
+    [ -n "$raw" ] || { echo ""; return; }
+    id="${raw##*/}"          # strip vertex "publishers/.../models/ID" paths
+    id="${id##*.}"           # strip a leading "provider." prefix (Bedrock)
+    case "$id" in
+        *claude*) ;;
+        *) echo "$raw"; return ;;
+    esac
+    id="${id%-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]}"   # trailing yyyymmdd
+    local IFS='-'
+    local prev_num=0
+    for part in $id; do
+        [ -n "$part" ] || continue
+        if [[ "$part" =~ ^[0-9]+$ ]]; then
+            if [ "$prev_num" -eq 1 ]; then out="${out}.${part}"; else out="${out} ${part}"; fi
+            prev_num=1
+        else
+            out="${out} $(tr '[:lower:]' '[:upper:]' <<< "${part:0:1}")${part:1}"
+            prev_num=0
+        fi
+    done
+    echo "${out# }"
 }
 
 grade_for() {
@@ -482,6 +528,10 @@ if [ -f "$CONFIG_FILE" ]; then
             ["path_levels", s(.path_levels)],
             ["max_width", s(.max_width)],
             ["context_value", s(.context_value)],
+            ["auto_compact_window", s(.auto_compact_window)],
+            ["model_source", s(.model_source)],
+            ["external_usage_path", s(.external_usage_path)],
+            ["external_usage_max_age", s(.external_usage_max_age)],
             ["lines", (try (.lines | map(join(",")) | join("|")) catch "")],
             ["push_warning_threshold", s(.git.push_warning_threshold)],
             ["push_critical_threshold", s(.git.push_critical_threshold)]
@@ -504,6 +554,10 @@ if [ -f "$CONFIG_FILE" ]; then
                 path_levels) is_num "$_v" && [ "${_v%.*}" -ge 1 ] && [ "${_v%.*}" -le 5 ] && cfg_path_levels="${_v%.*}" ;;
                 max_width) is_num "$_v" && [ "${_v%.*}" -ge 0 ] && cfg_max_width="${_v%.*}" ;;
                 context_value) case "$_v" in percent|tokens|remaining|both) cfg_context_value="$_v" ;; esac ;;
+                auto_compact_window) is_num "$_v" && [ "${_v%.*}" -ge 1000 ] && cfg_auto_compact_window="${_v%.*}" ;;
+                model_source) case "$_v" in stdin|transcript|auto) cfg_model_source="$_v" ;; esac ;;
+                external_usage_path) [ -n "$_v" ] && cfg_external_usage_path="$_v" ;;
+                external_usage_max_age) is_num "$_v" && [ "${_v%.*}" -ge 0 ] && cfg_external_usage_max_age="${_v%.*}" ;;
                 lines) [ -n "$_v" ] && cfg_lines="$_v" ;;
                 push_warning_threshold) is_num "$_v" && cfg_push_warning="${_v%.*}" ;;
                 push_critical_threshold) is_num "$_v" && cfg_push_critical="${_v%.*}" ;;
@@ -684,6 +738,47 @@ elif [ -f "$_rl_cache" ]; then
     fi
 fi
 
+# External usage snapshot (opt-in): when stdin omits rate_limits and no live
+# cache filled them, a JSON file maintained by another tool (e.g. a zero-token
+# scheduled `get_usage` job) can seed the 5h/Nd bars from session start, and
+# optionally carry per-model weekly windows the stdin payload never includes.
+# Only a snapshot fresher than external_usage_max_age is trusted, so a stale
+# file never resurrects a rolled-over window.
+model_scoped_rows=""
+if [ -n "$cfg_external_usage_path" ]; then
+    _eu_path="$cfg_external_usage_path"
+    # shellcheck disable=SC2088  # matching a literal leading ~/ in config text, not expanding
+    case "$_eu_path" in "~/"*) _eu_path="$HOME/${_eu_path#\~/}" ;; esac
+    if [ -f "$_eu_path" ]; then
+        _eu_age=$(( $(date +%s) - $(file_mtime "$_eu_path") ))
+        if [ "$cfg_external_usage_max_age" -eq 0 ] || [ "$_eu_age" -le "$cfg_external_usage_max_age" ]; then
+            _eu_out=$(jq -r '
+                def s(v): if v == null then "" else (v | tostring) end;
+                (
+                  [
+                    ["WINDOW", "five", s(.rate_limits.five_hour.used_percentage), s(.rate_limits.five_hour.resets_at)],
+                    ["WINDOW", "seven", s(.rate_limits.seven_day.used_percentage), s(.rate_limits.seven_day.resets_at)]
+                  ]
+                  + (((.model_scoped // {}) | to_entries) | map(["MODEL", .key, s(.value.used_percentage), s(.value.resets_at)]))
+                ) | .[] | @tsv' "$_eu_path" 2>/dev/null)
+            while IFS=$'\t' read -r _eu_tag _eu_a _eu_b _eu_c; do
+                case "$_eu_tag" in
+                    WINDOW)
+                        if [ "$_eu_a" = "five" ] && [ -z "$five_util_probe" ] && is_num "$_eu_b"; then
+                            five_util_probe="$_eu_b"; five_reset="$_eu_c"
+                        elif [ "$_eu_a" = "seven" ] && [ -z "$seven_util_probe" ] && is_num "$_eu_b"; then
+                            seven_util_probe="$_eu_b"; seven_reset="$_eu_c"
+                        fi
+                        ;;
+                    MODEL)
+                        is_num "$_eu_b" && model_scoped_rows+="${_eu_a}"$'\t'"${_eu_b}"$'\t'"${_eu_c}"$'\n'
+                        ;;
+                esac
+            done <<< "$_eu_out"
+        fi
+    fi
+fi
+
 [ "$worktree" = "null" ] && worktree=""
 [ -z "$cwd" ] && cwd="$current_dir"
 
@@ -705,6 +800,27 @@ case "$ANTHROPIC_BASE_URL" in
     *openrouter.ai*) IS_OPENROUTER=1 ;;
 esac
 
+# Bedrock / Vertex are selected by their own env flags (or a matching base URL),
+# not by ANTHROPIC_BASE_URL naming, so they're detected separately.
+IS_BEDROCK=0
+IS_VERTEX=0
+case "${CLAUDE_CODE_USE_BEDROCK:-}" in 1|true) IS_BEDROCK=1 ;; esac
+case "${CLAUDE_CODE_USE_VERTEX:-}" in 1|true) IS_VERTEX=1 ;; esac
+case "$ANTHROPIC_BASE_URL" in
+    *bedrock*|*amazonaws.com*) IS_BEDROCK=1 ;;
+    *aiplatform.googleapis.com*|*-vertex*) IS_VERTEX=1 ;;
+esac
+
+# A non-first-party backend is anything but a bare/first-party Anthropic setup.
+IS_PROXY=0
+[ "$IS_OPENROUTER" -eq 1 ] && IS_PROXY=1
+[ "$IS_BEDROCK" -eq 1 ] && IS_PROXY=1
+[ "$IS_VERTEX" -eq 1 ] && IS_PROXY=1
+case "$ANTHROPIC_BASE_URL" in
+    ""|*api.anthropic.com*) ;;
+    *) IS_PROXY=1 ;;
+esac
+
 IS_SUBSCRIPTION=0
 is_num "$five_util_probe" && is_num "$seven_util_probe" && IS_SUBSCRIPTION=1
 
@@ -714,6 +830,10 @@ provider_badge=""
 if [ "$cfg_show_provider" = "1" ]; then
     if [ "$IS_OPENROUTER" -eq 1 ]; then
         provider_badge="OpenRouter"
+    elif [ "$IS_BEDROCK" -eq 1 ]; then
+        provider_badge="Bedrock"
+    elif [ "$IS_VERTEX" -eq 1 ]; then
+        provider_badge="Vertex"
     elif [ -n "$ANTHROPIC_BASE_URL" ]; then
         case "$ANTHROPIC_BASE_URL" in
             *api.anthropic.com*) ;;
@@ -725,6 +845,14 @@ if [ "$cfg_show_provider" = "1" ]; then
         esac
     fi
 fi
+
+# model_source: optionally recover the real model name from the transcript when a
+# proxy may be rewriting the stdin display_name (auto = only behind a proxy).
+_want_transcript_model=0
+case "$cfg_model_source" in
+    transcript) _want_transcript_model=1 ;;
+    auto) [ "$IS_PROXY" -eq 1 ] && _want_transcript_model=1 ;;
+esac
 
 # ---------------------------------------------------------------------------
 # LOC count (60s cache per git root)
@@ -880,7 +1008,14 @@ token_input="${sv_cur_in:-0}"; is_num "$token_input" || token_input=0
 token_cc="${sv_cur_cc:-0}"; is_num "$token_cc" || token_cc=0
 token_cr="${sv_cur_cr:-0}"; is_num "$token_cr" || token_cr=0
 token_total=$(( ${token_input%.*} + ${token_cc%.*} + ${token_cr%.*} ))
-if ! is_num "$pct"; then
+# When an auto-compact window is configured, re-base the whole context readout
+# (percent, used/max, remaining) onto it so the figure matches `/context`, which
+# measures against the auto-compact threshold rather than the full model window.
+if [ "$cfg_auto_compact_window" -gt 0 ]; then
+    window_size="$cfg_auto_compact_window"
+    pct=$(( token_total * 100 / window_size ))
+    sv_remaining_pct=""
+elif ! is_num "$pct"; then
     pct=$(( window_size > 0 ? token_total * 100 / window_size : 0 ))
 fi
 pct=${pct%.*}
@@ -925,6 +1060,7 @@ remaining_k=$(( remaining_tokens / 1000 ))
 # "running" — that's what marks the activity spinner and live agents.
 # ---------------------------------------------------------------------------
 session_total_input=""; session_total_output=""
+transcript_model=""
 tool_calls_total=""
 bucket_skills=""; bucket_code=""; bucket_commands=""
 bucket_read=""; bucket_mcp=""; bucket_other=""
@@ -937,6 +1073,7 @@ for _flag in "$cfg_show_total_tokens" "$cfg_show_tool_calls" "$cfg_show_efficien
              "$cfg_show_activity" "$cfg_show_agents" "$cfg_show_todos"; do
     [ "$_flag" = "1" ] && _need_transcript=1
 done
+[ "$_want_transcript_model" -eq 1 ] && _need_transcript=1
 
 if [ "$_need_transcript" -eq 1 ] && [ -n "$transcript_path" ] && [ -f "$transcript_path" ]; then
     _tr_dir="$CACHE_ROOT/transcript-cache"
@@ -964,6 +1101,7 @@ agent_tools = {'task', 'agent'}
 tools = []
 tools_by_id = {}
 latest_todos = None
+latest_model = ''
 
 
 def clean(text, limit):
@@ -1015,6 +1153,9 @@ try:
             role = msg.get('role')
             content = msg.get('content')
             if role == 'assistant':
+                model_name = msg.get('model')
+                if isinstance(model_name, str) and model_name and model_name != '<synthetic>':
+                    latest_model = model_name
                 usage = msg.get('usage') or {}
                 for key in ('input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'):
                     value = usage.get(key)
@@ -1073,6 +1214,8 @@ except Exception:
     pass
 
 print(f'TOKENS\t{int(total_in)}\t{int(total_out)}')
+if latest_model:
+    print(f'MODEL\t{latest_model}')
 print(f'BUCKET\tTOTAL\t{sum(buckets.values())}')
 for key, count in buckets.items():
     print(f'BUCKET\t{key}\t{count}')
@@ -1120,6 +1263,8 @@ PYEOF
             case "$_tag" in
                 TOKENS)
                     session_total_input="$_a"; session_total_output="$_b" ;;
+                MODEL)
+                    transcript_model="$_a" ;;
                 BUCKET)
                     is_num "$_b" || continue
                     case "$_a" in
@@ -1171,6 +1316,13 @@ PYEOF
         is_num "$session_total_input" || session_total_input=""
         is_num "$session_total_output" || session_total_output=""
     fi
+fi
+
+# Override the displayed model name with the real one from the transcript when
+# model_source asked for it and the transcript actually named a model. Raw ids
+# (claude-sonnet-4-6-20250101) are humanized to "Claude Sonnet 4.6".
+if [ "$_want_transcript_model" -eq 1 ] && [ -n "$transcript_model" ]; then
+    model=$(humanize_model_id "$transcript_model")
 fi
 
 # ---------------------------------------------------------------------------
@@ -1385,6 +1537,23 @@ if [ "$IS_SUBSCRIPTION" -eq 1 ] && [ "$cfg_show_sessions" = "1" ]; then
     if [ -n "$seven_reset_countdown" ]; then
         seven_reset_marker=$(format_reset_marker "$seven_reset")
         seg_sessions="${seg_sessions} $(muted "${L_RESET} ${seven_reset_countdown}${seven_reset_marker:+ (${seven_reset_marker})}")"
+    fi
+
+    # Per-model weekly windows from the external snapshot (e.g. a Fable quota the
+    # stdin payload never carries): one compact "name bar pct%" clause each.
+    if [ -n "$model_scoped_rows" ]; then
+        while IFS=$'\t' read -r _ms_name _ms_pct _ms_reset; do
+            [ -n "$_ms_name" ] || continue
+            _ms_pct=${_ms_pct%.*}; is_num "$_ms_pct" || continue
+            _ms_color=$(usage_color "$_ms_pct" "$cfg_7d_warn" "$cfg_7d_crit")
+            _ms_bar=$(render_bar "$_ms_pct" "$_ms_color")
+            seg_sessions="${seg_sessions} $(muted "|") ${C_LABEL}${_ms_name}${RESET} ${_ms_bar} ${_ms_color}${_ms_pct}%${RESET}"
+            _ms_reset_countdown=$(fmt_countdown_epoch "$_ms_reset")
+            if [ -n "$_ms_reset_countdown" ]; then
+                _ms_reset_marker=$(format_reset_marker "$_ms_reset")
+                seg_sessions="${seg_sessions} $(muted "${L_RESET} ${_ms_reset_countdown}${_ms_reset_marker:+ (${_ms_reset_marker})}")"
+            fi
+        done <<< "$model_scoped_rows"
     fi
 fi
 

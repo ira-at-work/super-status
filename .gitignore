@@ -1,3 +1,6 @@
 backup
 drafts
 .DS_Store
+flows/cache
+flows/history
+flows/state.json

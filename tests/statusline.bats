@@ -436,3 +436,150 @@ transcript_payload() {
     [[ "$plain" == *"◆ Opus"* ]]
     [[ "$plain" != *"◆ Opus ["* ]]
 }
+
+@test "z.ai base URL adds a z.ai badge" {
+    run bash -c "printf '%s' \"\$1\" | ANTHROPIC_BASE_URL=https://api.z.ai/api/anthropic bash \"\$2\"" _ "$MINIMAL_PAYLOAD" "$SCRIPT"
+    plain=$(strip_ansi "$output")
+    [[ "$plain" == *"◆ Opus [z.ai]"* ]]
+}
+
+@test "an unknown proxy base URL shows its host as the badge" {
+    run bash -c "printf '%s' \"\$1\" | ANTHROPIC_BASE_URL=https://proxy.internal:8080/v1 bash \"\$2\"" _ "$MINIMAL_PAYLOAD" "$SCRIPT"
+    plain=$(strip_ansi "$output")
+    [[ "$plain" == *"◆ Opus [proxy.internal:8080]"* ]]
+}
+
+@test "provider display toggle off hides the badge" {
+    echo '{"display":{"provider":false}}' > "$HOME/.claude/super-status/config.json"
+    run bash -c "printf '%s' \"\$1\" | ANTHROPIC_BASE_URL=https://openrouter.ai/api/v1 bash \"\$2\"" _ "$MINIMAL_PAYLOAD" "$SCRIPT"
+    plain=$(strip_ansi "$output")
+    [[ "$plain" != *"[OpenRouter]"* ]]
+}
+
+# --- e2e: Bedrock / Vertex badges (R5) --------------------------------------
+
+@test "CLAUDE_CODE_USE_BEDROCK=1 adds a Bedrock badge" {
+    run bash -c "printf '%s' \"\$1\" | CLAUDE_CODE_USE_BEDROCK=1 bash \"\$2\"" _ "$MINIMAL_PAYLOAD" "$SCRIPT"
+    plain=$(strip_ansi "$output")
+    [[ "$plain" == *"◆ Opus [Bedrock]"* ]]
+}
+
+@test "CLAUDE_CODE_USE_VERTEX=1 adds a Vertex badge" {
+    run bash -c "printf '%s' \"\$1\" | CLAUDE_CODE_USE_VERTEX=1 bash \"\$2\"" _ "$MINIMAL_PAYLOAD" "$SCRIPT"
+    plain=$(strip_ansi "$output")
+    [[ "$plain" == *"◆ Opus [Vertex]"* ]]
+}
+
+# --- unit: humanize_model_id (R5) -------------------------------------------
+
+@test "humanize_model_id turns raw ids into readable names" {
+    [ "$(humanize_model_id 'claude-sonnet-4-6-20250101')" = "Claude Sonnet 4.6" ]
+    [ "$(humanize_model_id 'claude-3-5-haiku-20241022')" = "Claude 3.5 Haiku" ]
+    [ "$(humanize_model_id 'claude-opus-4-1')" = "Claude Opus 4.1" ]
+}
+
+@test "humanize_model_id strips a Bedrock provider prefix" {
+    [ "$(humanize_model_id 'us.anthropic.claude-opus-4-20250514')" = "Claude Opus 4" ]
+}
+
+@test "humanize_model_id returns a non-Claude id unchanged" {
+    [ "$(humanize_model_id 'gpt-4o')" = "gpt-4o" ]
+}
+
+# --- e2e: model_source recovers the real model from the transcript (R5) -----
+
+@test "model_source transcript overrides the stdin display_name" {
+    cat > "$BATS_TEST_TMPDIR/tr.jsonl" <<'EOF'
+{"timestamp":"2026-07-17T10:00:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-6-20250101","usage":{"input_tokens":10,"output_tokens":5},"content":[]}}
+EOF
+    echo '{"model_source":"transcript"}' > "$HOME/.claude/super-status/config.json"
+    payload=$(printf '{"model":{"display_name":"Opus"},"session_id":"ms1","transcript_path":"%s","context_window":{"used_percentage":25}}' "$BATS_TEST_TMPDIR/tr.jsonl")
+    run_statusline "$payload"
+    plain=$(strip_ansi "$output")
+    [[ "$plain" == *"◆ Claude Sonnet 4.6"* ]]
+    [[ "$plain" != *"◆ Opus"* ]]
+}
+
+@test "model_source auto only overrides behind a proxy" {
+    cat > "$BATS_TEST_TMPDIR/tr.jsonl" <<'EOF'
+{"timestamp":"2026-07-17T10:00:00.000Z","message":{"role":"assistant","model":"claude-sonnet-4-6-20250101","usage":{"input_tokens":10,"output_tokens":5},"content":[]}}
+EOF
+    echo '{"model_source":"auto"}' > "$HOME/.claude/super-status/config.json"
+    payload=$(printf '{"model":{"display_name":"Opus"},"session_id":"ms2","transcript_path":"%s","context_window":{"used_percentage":25}}' "$BATS_TEST_TMPDIR/tr.jsonl")
+    # No proxy: keeps the stdin name.
+    run_statusline "$payload"
+    [[ "$(strip_ansi "$output")" == *"◆ Opus"* ]]
+    # Behind a proxy: recovers the real name.
+    run bash -c "printf '%s' \"\$1\" | ANTHROPIC_BASE_URL=https://proxy.internal/v1 bash \"\$2\"" _ "$payload" "$SCRIPT"
+    [[ "$(strip_ansi "$output")" == *"◆ Claude Sonnet 4.6 [proxy.internal]"* ]]
+}
+
+# --- e2e: auto_compact_window re-bases the context percentage (R4) -----------
+
+@test "auto_compact_window re-bases Ctx % onto the configured window" {
+    echo '{"auto_compact_window":160000}' > "$HOME/.claude/super-status/config.json"
+    # 80k used tokens: 40% of the 200k window, but 50% of a 160k compact window.
+    payload='{"model":{"display_name":"Opus"},"context_window":{"used_percentage":40,"context_window_size":200000,"current_usage":{"input_tokens":80000}}}'
+    run_statusline "$payload"
+    plain=$(strip_ansi "$output")
+    [[ "$plain" == *"Ctx "*" 50%"* ]]
+    [[ "$plain" == *"80k/160k"* ]]
+}
+
+@test "without auto_compact_window Ctx % stays on the full window" {
+    payload='{"model":{"display_name":"Opus"},"context_window":{"used_percentage":40,"context_window_size":200000,"current_usage":{"input_tokens":80000}}}'
+    run_statusline "$payload"
+    plain=$(strip_ansi "$output")
+    [[ "$plain" == *"Ctx "*" 40%"* ]]
+}
+
+# --- e2e: external usage snapshot (R3) --------------------------------------
+
+@test "external usage snapshot fills the 5h/Nd bars when stdin omits them" {
+    future_five=$(( $(date +%s) + 3000 ))
+    future_seven=$(( $(date +%s) + 400000 ))
+    snap="$BATS_TEST_TMPDIR/usage.json"
+    printf '{"rate_limits":{"five_hour":{"used_percentage":37,"resets_at":%s},"seven_day":{"used_percentage":52,"resets_at":%s}}}' \
+        "$future_five" "$future_seven" > "$snap"
+    printf '{"external_usage_path":"%s"}' "$snap" > "$HOME/.claude/super-status/config.json"
+    run_statusline "$MINIMAL_PAYLOAD"
+    plain=$(strip_ansi "$output")
+    [[ "$plain" == *"5h "*" 37%"* ]]
+    [[ "$plain" == *" 52%"* ]]
+}
+
+@test "a stale external usage snapshot is ignored" {
+    future_five=$(( $(date +%s) + 3000 ))
+    future_seven=$(( $(date +%s) + 400000 ))
+    snap="$BATS_TEST_TMPDIR/usage.json"
+    printf '{"rate_limits":{"five_hour":{"used_percentage":37,"resets_at":%s},"seven_day":{"used_percentage":52,"resets_at":%s}}}' \
+        "$future_five" "$future_seven" > "$snap"
+    touch -t 202001010000 "$snap"
+    printf '{"external_usage_path":"%s","external_usage_max_age":60}' "$snap" > "$HOME/.claude/super-status/config.json"
+    run_statusline "$MINIMAL_PAYLOAD"
+    plain=$(strip_ansi "$output")
+    [[ "$plain" != *"37%"* ]]
+}
+
+@test "stdin rate_limits win over the external snapshot" {
+    future=$(( $(date +%s) + 400000 ))
+    snap="$BATS_TEST_TMPDIR/usage.json"
+    printf '{"rate_limits":{"five_hour":{"used_percentage":37,"resets_at":%s},"seven_day":{"used_percentage":52,"resets_at":%s}}}' \
+        "$future" "$future" > "$snap"
+    printf '{"external_usage_path":"%s"}' "$snap" > "$HOME/.claude/super-status/config.json"
+    run_statusline "$SUBSCRIPTION_PAYLOAD"
+    plain=$(strip_ansi "$output")
+    [[ "$plain" == *"5h "*" 63%"* ]]
+    [[ "$plain" != *"37%"* ]]
+}
+
+@test "external snapshot model_scoped windows render per-model bars" {
+    future=$(( $(date +%s) + 400000 ))
+    snap="$BATS_TEST_TMPDIR/usage.json"
+    printf '{"rate_limits":{"five_hour":{"used_percentage":10,"resets_at":%s},"seven_day":{"used_percentage":20,"resets_at":%s}},"model_scoped":{"Fable":{"used_percentage":66,"resets_at":%s}}}' \
+        "$future" "$future" "$future" > "$snap"
+    printf '{"external_usage_path":"%s"}' "$snap" > "$HOME/.claude/super-status/config.json"
+    run_statusline "$MINIMAL_PAYLOAD"
+    plain=$(strip_ansi "$output")
+    [[ "$plain" == *"Fable "*" 66%"* ]]
+}

@@ -1,0 +1,10 @@
+version: 2
+updates:
+  # The only external moving parts are the GitHub Actions this repo pins;
+  # keep those patched. The statusline itself has no package manifest.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
