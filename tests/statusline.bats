@@ -184,6 +184,30 @@ SUBSCRIPTION_PAYLOAD='{"model":{"display_name":"Opus"},"workspace":{"project_dir
     [[ "$plain" == *"SUBSCRIPTION START DATE IS INVALID"* ]]
 }
 
+# --- e2e: rate-limit persistence across /clear ------------------------------
+
+@test "cached rate limits are restored when a fresh session omits them" {
+    # First render carries rate_limits and seeds the cache.
+    run_statusline "$SUBSCRIPTION_PAYLOAD"
+    [[ "$(strip_ansi "$output")" == *"5h "*" 63% Reset "* ]]
+    # A fresh session (post-/clear) has no rate_limits; the bars come from cache.
+    run_statusline "$MINIMAL_PAYLOAD"
+    plain=$(strip_ansi "$output")
+    [[ "$plain" == *"5h "*" 63% Reset "* ]]
+    [[ "$plain" == *" 44% Reset "* ]]
+}
+
+@test "a cached window whose reset has passed is not resurrected" {
+    mkdir -p "$XDG_CACHE_HOME/super-status"
+    past=$(( $(date +%s) - 100 ))
+    future=$(( $(date +%s) + 400000 ))
+    printf '63\t%s\t44\t%s\n' "$past" "$future" \
+        > "$XDG_CACHE_HOME/super-status/rate-limits.tsv"
+    run_statusline "$MINIMAL_PAYLOAD"
+    plain=$(strip_ansi "$output")
+    [[ "$plain" != *"63%"* ]]
+}
+
 # --- e2e: config ------------------------------------------------------------
 
 @test "malformed config.json warns once and still renders with defaults" {

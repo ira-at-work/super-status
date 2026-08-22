@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.5.0 — 22/08/2026
+
+### Fixed
+- **The `Sessions` 5h/`Nd` usage bars now survive `/clear` and a fresh
+  session start.** Claude Code only populates `rate_limits` in its stdin JSON
+  after the session has made a real API call, so right after `/clear` (or before
+  the first turn) both bars vanished until a task kicked off. Since the 5-hour
+  and weekly windows are account-global rather than per-session, the last-seen
+  values are now cached to disk and restored on a miss — each window
+  independently, and only while its cached reset timestamp is still in the
+  future, so a window that has since rolled over is never resurrected as a stale
+  percentage.
+
 ## 2.4.1 — 14/08/2026
 
 ### Fixed

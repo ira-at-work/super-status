@@ -654,6 +654,36 @@ done <<< "$(jq -r '
       ["seven_reset", s(.rate_limits.seven_day.resets_at)]
     ] | .[] | @tsv' <<< "$input" 2>/dev/null)"
 
+# ---------------------------------------------------------------------------
+# Rate-limit persistence across sessions.
+# Claude Code only populates `rate_limits` in the stdin JSON once the session
+# has made a real API call; a fresh session (right after /clear, or before its
+# first turn) omits it, which would blank the Sessions 5h/Nd bars until a task
+# starts. Those windows are account-global, not per-session, so the last-seen
+# values are cached to disk and restored on a miss — but only while the cached
+# reset timestamp is still in the future, so a window that has since rolled over
+# is never resurrected as a stale percentage. The 5h and 7d windows reset
+# independently, so each is restored on its own.
+# ---------------------------------------------------------------------------
+_rl_cache="$CACHE_ROOT/rate-limits.tsv"
+if is_num "$five_util_probe" && is_num "$seven_util_probe"; then
+    printf '%s\t%s\t%s\t%s\n' \
+        "$five_util_probe" "$five_reset" "$seven_util_probe" "$seven_reset" \
+        > "$_rl_cache" 2>/dev/null
+elif [ -f "$_rl_cache" ]; then
+    IFS=$'\t' read -r _rl_five_pct _rl_five_reset _rl_seven_pct _rl_seven_reset \
+        < "$_rl_cache" 2>/dev/null
+    _rl_now=$(date +%s)
+    if [ -z "$five_util_probe" ] && is_num "$_rl_five_pct" \
+        && is_num "${_rl_five_reset%.*}" && [ "${_rl_five_reset%.*}" -gt "$_rl_now" ]; then
+        five_util_probe="$_rl_five_pct"; five_reset="$_rl_five_reset"
+    fi
+    if [ -z "$seven_util_probe" ] && is_num "$_rl_seven_pct" \
+        && is_num "${_rl_seven_reset%.*}" && [ "${_rl_seven_reset%.*}" -gt "$_rl_now" ]; then
+        seven_util_probe="$_rl_seven_pct"; seven_reset="$_rl_seven_reset"
+    fi
+fi
+
 [ "$worktree" = "null" ] && worktree=""
 [ -z "$cwd" ] && cwd="$current_dir"
 
