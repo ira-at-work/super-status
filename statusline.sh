@@ -436,6 +436,10 @@ file_mtime() {
     stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0
 }
 
+file_size() {
+    stat -c %s "$1" 2>/dev/null || stat -f %z "$1" 2>/dev/null || echo 0
+}
+
 trim_ws() {
     local s="$1"
     s="${s#"${s%%[![:space:]]*}"}"
@@ -483,6 +487,7 @@ fi
 # "preset" is emitted first so explicit per-key values always override it.
 # ---------------------------------------------------------------------------
 CONFIG_FILE="${SUPER_STATUS_CONFIG:-$HOME/.claude/super-status/config.json}"
+CONFIG_MAX_BYTES=262144
 config_warning_line=""
 
 apply_preset() {
@@ -515,7 +520,9 @@ apply_preset() {
 }
 
 if [ -f "$CONFIG_FILE" ]; then
-    if ! _cfg_out=$(jq -r '
+    if [ -L "$CONFIG_FILE" ] || [ "$(file_size "$CONFIG_FILE")" -gt "$CONFIG_MAX_BYTES" ]; then
+        config_warning_line="${BOLD_RED}SUPER-STATUS CONFIG IS INVALID JSON - USING DEFAULTS: ${CONFIG_FILE}${RESET}"
+    elif ! _cfg_out=$(jq -r '
         def s(v): if v == null then "" else (v | tostring) end;
         (
           [
@@ -1139,6 +1146,17 @@ def target_for(name, tool_input):
     return ''
 
 
+def is_async_launch(block):
+    if block.get('isAsync') is True or block.get('status') == 'async_launched':
+        return True
+    inner = block.get('content')
+    items = inner if isinstance(inner, list) else [inner]
+    for item in items:
+        if isinstance(item, dict) and (item.get('isAsync') is True or item.get('status') == 'async_launched'):
+            return True
+    return False
+
+
 try:
     with open(path, 'r') as f:
         for line in f:
@@ -1209,7 +1227,7 @@ try:
                 elif btype == 'tool_result':
                     tool_id = block.get('tool_use_id')
                     if tool_id in tools_by_id:
-                        tools_by_id[tool_id]['done'] = True
+                        tools_by_id[tool_id]['done'] = not is_async_launch(block)
 except Exception:
     pass
 
