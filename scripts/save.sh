@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-shot "save my work": stage everything, commit with a plain-English
 # description, then let the post-commit hook (version-bump.sh) record a version
-# row and push the branch + tag with --force-with-lease.
+# row and push the branch + tag.
 #
 # Usage:
 #   scripts/save.sh <plain description of the change>
