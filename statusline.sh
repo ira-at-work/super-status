@@ -60,6 +60,12 @@ cfg_model_source="stdin"
 # seconds fills the 5h/Nd bars. 0 path = disabled.
 cfg_external_usage_path=""
 cfg_external_usage_max_age=1800
+# Parameter-count badge rendered after the model name ("◆ Sonnet 5 (365B)").
+# Anthropic publishes no parameter counts for Claude models, so there is no
+# built-in table: this is a user-declared "model_params" map from a
+# case-insensitive substring of the displayed model name to the text to show.
+cfg_model_params_patterns=()
+cfg_model_params_labels=()
 
 cfg_show_model=1
 cfg_show_repo=1
@@ -254,6 +260,29 @@ humanize_model_id() {
         fi
     done
     echo "${out# }"
+}
+
+# Parameter-count badge for a displayed model name, from the user-declared
+# model_params map. Matching is case-insensitive substring and the longest
+# matching pattern wins, so a specific "sonnet 5" beats a broader "sonnet"
+# regardless of the order they appear in config.json.
+model_params_label() {
+    local name="$1" lname idx pattern best="" best_len=0
+    [ -n "$name" ] || { echo ""; return; }
+    lname=$(tr '[:upper:]' '[:lower:]' <<< "$name")
+    for idx in "${!cfg_model_params_patterns[@]}"; do
+        pattern=$(tr '[:upper:]' '[:lower:]' <<< "${cfg_model_params_patterns[$idx]}")
+        [ -n "$pattern" ] || continue
+        case "$lname" in
+            *"$pattern"*)
+                if [ "${#pattern}" -gt "$best_len" ]; then
+                    best="${cfg_model_params_labels[$idx]}"
+                    best_len=${#pattern}
+                fi
+                ;;
+        esac
+    done
+    echo "$best"
 }
 
 grade_for() {
@@ -543,6 +572,7 @@ if [ -f "$CONFIG_FILE" ]; then
             ["push_warning_threshold", s(.git.push_warning_threshold)],
             ["push_critical_threshold", s(.git.push_critical_threshold)]
           ]
+          + ((.model_params // {}) | to_entries | map(["model_params_" + .key, s(.value)]))
           + ((.display // {}) | to_entries | map(["display_" + .key, s(.value)]))
           + ((.colors // {}) | to_entries | map(["color_" + .key, s(.value)]))
           + ((.thresholds // {}) | to_entries | map(["threshold_" + .key, s(.value)]))
@@ -565,6 +595,13 @@ if [ -f "$CONFIG_FILE" ]; then
                 model_source) case "$_v" in stdin|transcript|auto) cfg_model_source="$_v" ;; esac ;;
                 external_usage_path) [ -n "$_v" ] && cfg_external_usage_path="$_v" ;;
                 external_usage_max_age) is_num "$_v" && [ "${_v%.*}" -ge 0 ] && cfg_external_usage_max_age="${_v%.*}" ;;
+                model_params_*)
+                    _p="${_k#model_params_}"
+                    if [ -n "$_p" ] && [ -n "$_v" ]; then
+                        cfg_model_params_patterns+=("$_p")
+                        cfg_model_params_labels+=("$_v")
+                    fi
+                    ;;
                 lines) [ -n "$_v" ] && cfg_lines="$_v" ;;
                 push_warning_threshold) is_num "$_v" && cfg_push_warning="${_v%.*}" ;;
                 push_critical_threshold) is_num "$_v" && cfg_push_critical="${_v%.*}" ;;
@@ -1441,6 +1478,8 @@ fi
 seg_model=""
 if [ "$cfg_show_model" = "1" ] && [ -n "$model" ]; then
     seg_model="${C_MODEL}${L_MODEL} ${model}${RESET}"
+    _model_params=$(model_params_label "$model")
+    [ -n "$_model_params" ] && seg_model="${seg_model} $(muted "(${_model_params})")"
     [ -n "$provider_badge" ] && seg_model="${seg_model} $(muted "[${provider_badge}]")"
 fi
 

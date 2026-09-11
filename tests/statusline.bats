@@ -486,6 +486,31 @@ transcript_payload() {
     [ "$(humanize_model_id 'gpt-4o')" = "gpt-4o" ]
 }
 
+# --- model_params badge -----------------------------------------------------
+
+@test "model_params_label picks the longest matching pattern, case-insensitively" {
+    cfg_model_params_patterns=("Sonnet" "sonnet 5")
+    cfg_model_params_labels=("200B" "365B")
+    [ "$(model_params_label 'Sonnet 5')" = "365B" ]
+    [ "$(model_params_label 'Claude Sonnet 4.6')" = "200B" ]
+    [ -z "$(model_params_label 'Haiku 4.5')" ]
+    [ -z "$(model_params_label '')" ]
+}
+
+@test "model_params renders a parameter badge after the model name" {
+    echo '{"model_params":{"opus":"2T"}}' > "$HOME/.claude/super-status/config.json"
+    run_statusline "$MINIMAL_PAYLOAD"
+    plain=$(strip_ansi "$output")
+    [[ "$plain" == *"◆ Opus (2T)"* ]]
+}
+
+@test "no model_params map leaves the model name untouched" {
+    run_statusline "$MINIMAL_PAYLOAD"
+    plain=$(strip_ansi "$output")
+    [[ "$plain" == *"◆ Opus"* ]]
+    [[ "$plain" != *"("* ]]
+}
+
 # --- e2e: model_source recovers the real model from the transcript (R5) -----
 
 @test "model_source transcript overrides the stdin display_name" {
