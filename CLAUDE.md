@@ -18,7 +18,7 @@ Every commit is auto-versioned by `.git/hooks/post-commit` →
 `scripts/version-bump.sh`: it derives a semver bump from the commit type
 (Conventional Commits — `feat` → minor, `!`/`BREAKING CHANGE` → major, else
 patch), prepends a plain-English row to the per-year ledger `versions/<year>.md`,
-tags the commit `vX.Y.Z`, and pushes the branch + tag with `--force-with-lease`.
+tags the commit `vX.Y.Z`, and pushes the branch + tag.
 Seeded at `v2.5.0` (the CHANGELOG release at setup time).
 
 Write the plain-English change **before committing** so the ledger's "Change"

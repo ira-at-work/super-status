@@ -4,8 +4,7 @@
 # Commits), prepends a plain-English row to the per-year ledger versions/<year>.md
 # (creating that file with a header on the first commit of a new year) in a
 # follow-up "chore(version)" ledger commit, tags it vX.Y.Z, then pushes the branch
-# and the tag with --force-with-lease. The tagged ledger commit is the anchor a
-# revert restores to.
+# and the tag. The tagged ledger commit is the anchor a revert restores to.
 #
 # The plain-English "Change" cell is sourced from .git/version-note.md if one was
 # written before committing (one bullet per line), else falls back to a de-jargoned
@@ -101,10 +100,12 @@ git commit --no-verify -m "chore(version): v$next" >/dev/null 2>&1
 git tag -a "v$next" -m "$SUBJECT" >/dev/null 2>&1
 rm -f "$LOCK"
 
-# --- push branch + tag (safe force) -------------------------------------------
+# --- push branch + tag --------------------------------------------------------
+# A plain fast-forward push, not --force-with-lease: the default branch carries a
+# ruleset with non_fast_forward, which rejects any force-push regardless of lease.
 branch="$(git rev-parse --abbrev-ref HEAD)"
 if git remote get-url origin >/dev/null 2>&1; then
-  if git push --force-with-lease origin "$branch" >/dev/null 2>&1; then
+  if git push origin "$branch" >/dev/null 2>&1; then
     git push origin "v$next" >/dev/null 2>&1
     echo "🔖 Recorded and pushed version v$next"
   else

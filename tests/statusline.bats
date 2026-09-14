@@ -456,6 +456,30 @@ transcript_payload() {
     [[ "$plain" != *"[OpenRouter]"* ]]
 }
 
+# --- e2e: effort-level badge ------------------------------------------------
+
+@test "effort.level in the payload adds an effort badge to the model segment" {
+    payload='{"model":{"display_name":"Opus"},"workspace":{"project_dir":"/a/parent/child"},"context_window":{"used_percentage":25},"effort":{"level":"high"}}'
+    run bash -c "printf '%s' \"\$1\" | bash \"\$2\"" _ "$payload" "$SCRIPT"
+    plain=$(strip_ansi "$output")
+    [[ "$plain" == *"◆ Opus [High]"* ]]
+}
+
+@test "no effort field in the payload shows no effort badge" {
+    run bash -c "printf '%s' \"\$1\" | bash \"\$2\"" _ "$MINIMAL_PAYLOAD" "$SCRIPT"
+    plain=$(strip_ansi "$output")
+    [[ "$plain" == *"◆ Opus"* ]]
+    [[ "$plain" != *"◆ Opus ["* ]]
+}
+
+@test "effort display toggle off hides the effort badge" {
+    echo '{"display":{"effort":false}}' > "$HOME/.claude/super-status/config.json"
+    payload='{"model":{"display_name":"Opus"},"workspace":{"project_dir":"/a/parent/child"},"context_window":{"used_percentage":25},"effort":{"level":"max"}}'
+    run bash -c "printf '%s' \"\$1\" | bash \"\$2\"" _ "$payload" "$SCRIPT"
+    plain=$(strip_ansi "$output")
+    [[ "$plain" != *"[Max]"* ]]
+}
+
 # --- e2e: Bedrock / Vertex badges (R5) --------------------------------------
 
 @test "CLAUDE_CODE_USE_BEDROCK=1 adds a Bedrock badge" {
@@ -484,6 +508,31 @@ transcript_payload() {
 
 @test "humanize_model_id returns a non-Claude id unchanged" {
     [ "$(humanize_model_id 'gpt-4o')" = "gpt-4o" ]
+}
+
+# --- model_params badge -----------------------------------------------------
+
+@test "model_params_label picks the longest matching pattern, case-insensitively" {
+    cfg_model_params_patterns=("Sonnet" "sonnet 5")
+    cfg_model_params_labels=("200B" "365B")
+    [ "$(model_params_label 'Sonnet 5')" = "365B" ]
+    [ "$(model_params_label 'Claude Sonnet 4.6')" = "200B" ]
+    [ -z "$(model_params_label 'Haiku 4.5')" ]
+    [ -z "$(model_params_label '')" ]
+}
+
+@test "model_params renders a parameter badge after the model name" {
+    echo '{"model_params":{"opus":"2T"}}' > "$HOME/.claude/super-status/config.json"
+    run_statusline "$MINIMAL_PAYLOAD"
+    plain=$(strip_ansi "$output")
+    [[ "$plain" == *"◆ Opus (2T)"* ]]
+}
+
+@test "no model_params map leaves the model name untouched" {
+    run_statusline "$MINIMAL_PAYLOAD"
+    plain=$(strip_ansi "$output")
+    [[ "$plain" == *"◆ Opus"* ]]
+    [[ "$plain" != *"("* ]]
 }
 
 # --- e2e: model_source recovers the real model from the transcript (R5) -----

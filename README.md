@@ -181,11 +181,12 @@ A malformed config never breaks the render — defaults are used and a one-line 
   "context_value": "both",
   "auto_compact_window": 0,
   "model_source": "stdin",
+  "model_params": {},
   "external_usage_path": "",
   "external_usage_max_age": 1800,
   "display": {
     "model": true, "repo": true, "branch": true, "worktree": true,
-    "lines_changed": true, "version": true, "provider": true,
+    "lines_changed": true, "version": true, "provider": true, "effort": true,
     "git_dirty": false, "git_ahead_behind": false, "git_file_stats": false,
     "subscription": true, "sessions": true, "balance": true,
     "context": true, "cost": true, "total_tokens": true,
@@ -221,9 +222,10 @@ A malformed config never breaks the render — defaults are used and a one-line 
 | `context_value` | What renders on the `Ctx` segment next to the bar: `percent`, `tokens`, `remaining` (tokens left before auto-compact — uses Claude Code's own `remaining_percentage` when present), or `both` |
 | `auto_compact_window` | When set to a positive token count (e.g. `160000`), the `Ctx` percentage and `used/max` are measured against this window instead of the full model window, so the figure matches what `/context` shows (which counts against the auto-compact threshold). `0` = disabled |
 | `model_source` | Where the model **name** comes from: `stdin` (trust Claude Code's `display_name`, the default), `transcript` (always read the real model id from the session transcript), or `auto` (use the transcript only when a non-Anthropic backend is detected). Useful behind a proxy that rewrites the model name — raw ids like `claude-sonnet-4-6-20250101` are humanized to `Claude Sonnet 4.6` |
+| `model_params` | Parameter-count badge shown after the model name (`◆ Sonnet 5 (365B)`). A map from a case-insensitive **substring of the displayed model name** to the text to render, e.g. `{"sonnet 5": "365B", "opus 5": "2T"}`. The longest matching pattern wins, so a specific `"sonnet 5"` beats a broader `"sonnet"`. Empty (the default) = no badge — Anthropic publishes no parameter counts, so these numbers are yours to declare, not a built-in table |
 | `external_usage_path` | Path to a local JSON file another tool writes with the same shape as stdin's `rate_limits` (optionally plus a `model_scoped` map of per-model weekly windows). When stdin omits `rate_limits`, a fresh snapshot fills the `5h`/`Nd` bars from session start and renders any per-model windows. Supports a leading `~/`. Empty = disabled |
 | `external_usage_max_age` | Freshness cap in seconds for `external_usage_path` (default `1800`). A snapshot older than this is ignored, so a stale file never resurrects a rolled-over window. `0` = never expire |
-| `display.*` | Per-field show/hide. Field names match the segment names under **Custom layout** below (plus `git_dirty` / `git_ahead_behind` / `git_file_stats` / `provider`, which are sub-toggles of `branch`/`model`) |
+| `display.*` | Per-field show/hide. Field names match the segment names under **Custom layout** below (plus `git_dirty` / `git_ahead_behind` / `git_file_stats` / `provider` / `effort`, which are sub-toggles of `branch`/`model`) |
 | `git.push_warning_threshold` / `push_critical_threshold` | Unpushed-commit counts at which the `↑N` marker turns orange / red |
 | `colors.*` | Per-element color overrides: named ANSI (`red`, `cyan`, `grey`, `bright-blue`, `orange`, ...), 256-color numbers (`"208"`), or hex (`"#ff8800"`). Empty = built-in default |
 | `thresholds.*` | Percentages at which the context / 5-hour / weekly bars turn orange (warning) and red (critical) |
@@ -284,7 +286,7 @@ To make the time fields update continuously instead of only on those events, add
 
 | Field              | Example             | Meaning                                                                |
 | ------------------ | -------------------- | ----------------------------------------------------------------------- |
-| `◆ <model>`        | `◆ Claude Sonnet 4.6` | The model powering the current session, in the accent color. On a non-Anthropic backend a provider badge is appended (`[OpenRouter]`, `[z.ai]`, `[Bedrock]`, `[Vertex]`, or the backend's hostname). Bedrock/Vertex are detected from `CLAUDE_CODE_USE_BEDROCK`/`CLAUDE_CODE_USE_VERTEX` (or a matching base URL). With `model_source` set, the name can be recovered from the transcript when a proxy rewrites it |
+| `◆ <model>`        | `◆ Claude Sonnet 4.6` | The model powering the current session, in the accent color. A `model_params` entry adds its parameter count after the name (`◆ Sonnet 5 (365B)`). On a non-Anthropic backend a provider badge is appended (`[OpenRouter]`, `[z.ai]`, `[Bedrock]`, `[Vertex]`, or the backend's hostname). Bedrock/Vertex are detected from `CLAUDE_CODE_USE_BEDROCK`/`CLAUDE_CODE_USE_VERTEX` (or a matching base URL). When Claude Code reports a reasoning-effort level (`low`/`medium`/`high`/`xhigh`/`max`), it's appended last as `[High]`; models that don't support the effort parameter show no badge. With `model_source` set, the name can be recovered from the transcript when a proxy rewrites it |
 | `repo:branch/worktree` | `repo:master* ↑2 ↓1 !3 +1 ?2` | Current project folder, git branch (resolved from your working directory's git root), and — only inside a git worktree — the worktree name after a `/`. `path_levels` shows more of the repo path. With the git toggles enabled: `*` = dirty working tree; `↑N`/`↓N` = commits ahead/behind upstream (`↑` colored by the push thresholds); `!N +N ?N` = modified / staged / untracked file counts (only non-zero ones shown). Refreshed at most every 10s |
 | `+N -M`            | `+45 -12`             | Lines added/removed this session, taken directly from Claude Code's own `cost.total_lines_added`/`total_lines_removed` counters — updates immediately on every render, no caching. Only counts edits made by this session's own tools (not sub-agents running in their own sessions, and not nested-repo work outside the current one). Hidden if both are zero |
 | `vX.Y.Z`           | `v2.1.90`             | Claude Code CLI version (muted — informational)                        |
