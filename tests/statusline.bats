@@ -456,6 +456,30 @@ transcript_payload() {
     [[ "$plain" != *"[OpenRouter]"* ]]
 }
 
+# --- e2e: effort-level badge ------------------------------------------------
+
+@test "effort.level in the payload adds an effort badge to the model segment" {
+    payload='{"model":{"display_name":"Opus"},"workspace":{"project_dir":"/a/parent/child"},"context_window":{"used_percentage":25},"effort":{"level":"high"}}'
+    run bash -c "printf '%s' \"\$1\" | bash \"\$2\"" _ "$payload" "$SCRIPT"
+    plain=$(strip_ansi "$output")
+    [[ "$plain" == *"◆ Opus [High]"* ]]
+}
+
+@test "no effort field in the payload shows no effort badge" {
+    run bash -c "printf '%s' \"\$1\" | bash \"\$2\"" _ "$MINIMAL_PAYLOAD" "$SCRIPT"
+    plain=$(strip_ansi "$output")
+    [[ "$plain" == *"◆ Opus"* ]]
+    [[ "$plain" != *"◆ Opus ["* ]]
+}
+
+@test "effort display toggle off hides the effort badge" {
+    echo '{"display":{"effort":false}}' > "$HOME/.claude/super-status/config.json"
+    payload='{"model":{"display_name":"Opus"},"workspace":{"project_dir":"/a/parent/child"},"context_window":{"used_percentage":25},"effort":{"level":"max"}}'
+    run bash -c "printf '%s' \"\$1\" | bash \"\$2\"" _ "$payload" "$SCRIPT"
+    plain=$(strip_ansi "$output")
+    [[ "$plain" != *"[Max]"* ]]
+}
+
 # --- e2e: Bedrock / Vertex badges (R5) --------------------------------------
 
 @test "CLAUDE_CODE_USE_BEDROCK=1 adds a Bedrock badge" {
