@@ -77,6 +77,7 @@ cfg_show_git_dirty=0
 cfg_show_git_ahead_behind=0
 cfg_show_git_file_stats=0
 cfg_show_provider=1
+cfg_show_effort=1
 cfg_show_subscription=1
 cfg_show_sessions=1
 cfg_show_balance=1
@@ -608,7 +609,7 @@ if [ -f "$CONFIG_FILE" ]; then
                 display_*)
                     _b=$(to_bool "$_v") || continue
                     case "${_k#display_}" in
-                        model|repo|branch|worktree|lines_changed|version|git_dirty|git_ahead_behind|git_file_stats|provider|subscription|sessions|balance|context|cost|total_tokens|loc|session_time|thinking_time|cache_ratio|efficiency|tool_calls|activity|agents|todos|orchestrator)
+                        model|repo|branch|worktree|lines_changed|version|git_dirty|git_ahead_behind|git_file_stats|provider|effort|subscription|sessions|balance|context|cost|total_tokens|loc|session_time|thinking_time|cache_ratio|efficiency|tool_calls|activity|agents|todos|orchestrator)
                             printf -v "cfg_show_${_k#display_}" '%s' "$_b" ;;
                     esac
                     ;;
@@ -691,7 +692,7 @@ esac
 # key<TAB>value (replacing ~25 per-field jq spawns). @tsv escapes embedded
 # tabs/newlines so the read loop can never be desynced by data.
 # ---------------------------------------------------------------------------
-model=""; project_dir=""; cwd=""; current_dir=""; worktree=""
+model=""; effort_level=""; project_dir=""; cwd=""; current_dir=""; worktree=""
 session_id=""; transcript_path=""; cc_version=""
 sv_used_pct=""; sv_remaining_pct=""; sv_window_size=""
 sv_cur_in=""; sv_cur_cc=""; sv_cur_cr=""
@@ -701,6 +702,7 @@ five_util_probe=""; five_reset=""; seven_util_probe=""; seven_reset=""
 while IFS=$'\t' read -r _k _v; do
     case "$_k" in
         model) model="$_v" ;;
+        effort_level) effort_level="$_v" ;;
         project_dir) project_dir="$_v" ;;
         cwd) cwd="$_v" ;;
         current_dir) current_dir="$_v" ;;
@@ -728,6 +730,7 @@ done <<< "$(jq -r '
     def s(v): if v == null then "" else (v | tostring) end;
     [
       ["model", s(.model.display_name)],
+      ["effort_level", s(.effort.level)],
       ["project_dir", s(.workspace.project_dir)],
       ["cwd", s(.cwd)],
       ["current_dir", s(.workspace.current_dir)],
@@ -1481,6 +1484,10 @@ if [ "$cfg_show_model" = "1" ] && [ -n "$model" ]; then
     _model_params=$(model_params_label "$model")
     [ -n "$_model_params" ] && seg_model="${seg_model} $(muted "(${_model_params})")"
     [ -n "$provider_badge" ] && seg_model="${seg_model} $(muted "[${provider_badge}]")"
+    if [ "$cfg_show_effort" = "1" ] && [ -n "$effort_level" ]; then
+        _effort_display="$(tr '[:lower:]' '[:upper:]' <<<"${effort_level:0:1}")${effort_level:1}"
+        seg_model="${seg_model} $(muted "[${_effort_display}]")"
+    fi
 fi
 
 # Branch decorations (dirty marker, ahead/behind, file stats) build once here;
