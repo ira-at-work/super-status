@@ -242,9 +242,12 @@ humanize_model_id() {
     local raw="$1" id part out=""
     [ -n "$raw" ] || { echo ""; return; }
     id="${raw##*/}"          # strip vertex "publishers/.../models/ID" paths
-    if [[ "$id" =~ ^[a-zA-Z0-9_-]+\.(claude|gemini) ]]; then
-        id="${id#*.}"        # strip a leading "provider." prefix (Bedrock) safely
-    fi
+    # Strip leading "region.provider." segments (Bedrock, e.g. "us.anthropic.claude-...")
+    # one dot-segment at a time, stopping once the remaining segment is itself the
+    # model name — so a version dot in "gemini-1.5-pro" is never mistaken for one.
+    while [[ "$id" == *.* && "${id%%.*}" != *claude* && "${id%%.*}" != *gemini* ]]; do
+        id="${id#*.}"
+    done
     case "$id" in
         *claude*|*gemini*) ;;
         *) echo "$raw"; return ;;
