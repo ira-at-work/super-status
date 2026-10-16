@@ -916,10 +916,52 @@ fi
 # GIT_TERMINAL_PROMPT and GCM_INTERACTIVE stop git from ever pausing to ask
 # (none of these five commands touch the network, so nothing is lost);
 # GIT_OPTIONAL_LOCKS keeps a read-only call from taking the index lock.
+# A repository's own config can name programs git runs during status and add
+# (core.fsmonitor, filter drivers), so opening a hostile clone would run its
+# command on every render; fsmonitor is always off, and GIT_SAFE_ARGS carries
+# the per-repository filter overrides from git_safe_init.
+GIT_SAFE_ARGS=()
 git_run() {
     # shellcheck disable=SC2086  # deliberate split: empty when no timeout exists
     GIT_OPTIONAL_LOCKS=0 GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=Never \
-        ${GIT_TIMEOUT_CMD:+$GIT_TIMEOUT_CMD "$cfg_git_timeout"} git "$@" 2>/dev/null
+        ${GIT_TIMEOUT_CMD:+$GIT_TIMEOUT_CMD "$cfg_git_timeout"} \
+        git -c core.fsmonitor=false ${GIT_SAFE_ARGS[@]+"${GIT_SAFE_ARGS[@]}"} "$@" 2>/dev/null
+}
+
+# Blanks every filter driver defined outside global/system config, so only
+# helpers the user installed themselves (git-lfs) still run. Needs git 2.26+
+# for --show-scope; on older git the listing fails and no override is added.
+git_safe_init() { # $1 = git root
+    local _scope _entry _key _name _seen=$'\n'
+    GIT_SAFE_ARGS=()
+    while IFS= read -r -d '' _scope && IFS= read -r -d '' _entry; do
+        case "$_scope" in global|system) continue ;; esac
+        _key="${_entry%%$'\n'*}"
+        _name="${_key#filter.}"
+        _name="${_name%.*}"
+        [ -n "$_name" ] && [ "$_name" != "$_key" ] || continue
+        [[ "$_seen" == *$'\n'"$_name"$'\n'* ]] && continue
+        _seen+="$_name"$'\n'
+        GIT_SAFE_ARGS+=(-c "filter.${_name}.clean=" -c "filter.${_name}.smudge=" \
+                        -c "filter.${_name}.process=" -c "filter.${_name}.required=false")
+    done < <(git_run -C "$1" config --show-scope -z --get-regexp '^filter\.')
+}
+
+# Reads stdin until EOF, but gives up once a read waits $1 seconds with nothing
+# complete: `cat` would block for as long as a stalled writer holds the pipe
+# open. Under bash 3.2 a timed-out read drops its partial line, which only
+# happens on the stalled path that would otherwise never render at all.
+read_stdin_bounded() { # $1 = idle timeout in seconds
+    local _line _rc _out=""
+    while :; do
+        _line=""
+        IFS= read -r -t "$1" _line
+        _rc=$?
+        _out+="$_line"
+        [ "$_rc" -eq 0 ] || break
+        _out+=$'\n'
+    done
+    printf '%s' "$_out"
 }
 
 # ---------------------------------------------------------------------------
@@ -936,7 +978,7 @@ if [ "${SUPER_STATUS_DISABLE:-0}" = "1" ]; then
     exit 0
 fi
 
-input=$(cat)
+input=$(read_stdin_bounded 2)
 
 # ---------------------------------------------------------------------------
 # Private per-user cache root (XDG). /tmp is world-readable and its predictable
@@ -1445,6 +1487,7 @@ git_root=$(git_run -C "${cwd:-$project_dir}" rev-parse --show-toplevel)
 debug_log "git: timeout=${GIT_TIMEOUT_CMD:-none} root=${git_root:-<none>}"
 [ -z "$git_root" ] && git_root="${cwd:-$project_dir}"
 git_branch=""
+[ -n "$git_root" ] && [ -d "$git_root" ] && git_safe_init "$git_root"
 [ -n "$git_root" ] && [ -d "$git_root" ] && \
     git_branch=$(git_run -C "$git_root" rev-parse --abbrev-ref HEAD)
 
@@ -1680,10 +1723,10 @@ elif [ -n "$git_branch" ] && { [ "$cfg_show_git_dirty" = "1" ] || [ "$cfg_show_g
                         case "${_pline:1:1}" in [MD]) _mo=$(( _mo + 1 )) ;; esac
                         ;;
                 esac
-            done < <(git_run -C "$git_root" status --porcelain)
+            done < <(git_run -C "$git_root" status --porcelain --ignore-submodules=dirty)
         else
             # First line only — a dirty/clean answer doesn't need the full listing.
-            _first=$(git_run -C "$git_root" status --porcelain | head -n 1)
+            _first=$(git_run -C "$git_root" status --porcelain --ignore-submodules=dirty | head -n 1)
             [ -n "$_first" ] && _d=1
         fi
         if [ "$cfg_show_git_ahead_behind" = "1" ]; then
@@ -1806,7 +1849,7 @@ if [ "$cfg_show_lines_changed" = "1" ] && [ -z "$JJ_ROOT" ] && [ -n "$session_id
     if [ "$_sd_do" -eq 1 ] && [ -s "$_sd_base" ]; then
         _sd_now=$(snapshot_worktree_tree "$git_root")
         if [ -n "$_sd_now" ]; then
-            git_run -C "$git_root" diff --numstat --no-renames "$(cat "$_sd_base")" "$_sd_now" \
+            git_run -C "$git_root" diff --numstat --no-renames --no-ext-diff --no-textconv "$(cat "$_sd_base")" "$_sd_now" \
                 | awk '$1 ~ /^[0-9]+$/ {a+=$1; r+=$2} END {printf "%d %d", a, r}' > "$_sd_stat"
         fi
     fi
@@ -1921,6 +1964,9 @@ agent_tools = {'task', 'agent'}
 
 tools = []
 tools_by_id = {}
+# A background agent's completion notice may name only its task id, which is
+# the agentId its launch result reported.
+agent_launches = {}
 latest_todos = None
 latest_model = ''
 compactions = 0
@@ -2010,6 +2056,28 @@ def is_async_launch(block):
     return False
 
 
+# A background agent's tool_result lands at launch; it finishes when a
+# task-notification is enqueued, or, in forked/resumed sessions, when a
+# queued_command attachment carries the same notice.
+def task_notice(obj):
+    notice = None
+    if obj.get('type') == 'queue-operation' and obj.get('operation') == 'enqueue':
+        notice = obj.get('content')
+    elif obj.get('type') == 'attachment':
+        attachment = obj.get('attachment')
+        if isinstance(attachment, dict) and attachment.get('type') == 'queued_command':
+            notice = attachment.get('prompt')
+    if isinstance(notice, list):
+        notice = ''.join(b.get('text', '') for b in notice if isinstance(b, dict) and isinstance(b.get('text'), str))
+    if not isinstance(notice, str):
+        return None
+    task_id = re.search(r'<task-id>([^<]+)</task-id>', notice)
+    if not task_id:
+        return None
+    tool_use_id = re.search(r'<tool-use-id>([^<]+)</tool-use-id>', notice)
+    return tool_use_id.group(1) if tool_use_id else agent_launches.get(task_id.group(1))
+
+
 try:
     with open(path, 'r') as f:
         for line in f:
@@ -2022,6 +2090,9 @@ try:
                 continue
             if obj.get('type') == 'system' and obj.get('subtype') == 'compact_boundary':
                 compactions += 1
+            finished_id = task_notice(obj)
+            if finished_id in tools_by_id:
+                tools_by_id[finished_id]['done'] = True
             row_epoch = to_seconds(obj.get('timestamp'))
             msg = obj.get('message') or {}
             role = msg.get('role')
@@ -2148,7 +2219,12 @@ try:
                 elif btype == 'tool_result':
                     tool_id = block.get('tool_use_id')
                     if tool_id in tools_by_id:
-                        tools_by_id[tool_id]['done'] = not is_async_launch(block)
+                        launch = obj.get('toolUseResult')
+                        launch = launch if isinstance(launch, dict) else {}
+                        tools_by_id[tool_id]['done'] = not (is_async_launch(block) or is_async_launch(launch))
+                        agent_id = launch.get('agentId')
+                        if isinstance(agent_id, str) and agent_id:
+                            agent_launches[agent_id] = tool_id
 except Exception:
     pass
 
@@ -2779,8 +2855,22 @@ if { [ "$cfg_show_today" = "1" ] || [ "$cfg_show_week" = "1" ]; } && is_num "$co
         # of the day files that are now too old to ever be read again.
         find "$_dc_dir" -name '*.tsv' -mtime +8 -delete 2>/dev/null
     fi
+    # Concurrent sessions rewrite this one file, so the rewrite runs under a
+    # mkdir lock. An update takes milliseconds, so a lock older than 2s belongs
+    # to a killed render; one that cannot be taken in ~0.5s is skipped rather
+    # than stalling the render, accepting the old lost-update risk once.
+    _dc_lock="${_dc_file}.lock"
+    if [ -d "$_dc_lock" ] && [ $(( $(date +%s) - $(file_mtime "$_dc_lock") )) -gt 2 ]; then
+        rmdir "$_dc_lock" 2>/dev/null
+    fi
+    _dc_locked=0
+    for _i in 1 2 3 4 5 6 7 8 9 10; do
+        mkdir "$_dc_lock" 2>/dev/null && { _dc_locked=1; break; }
+        sleep 0.05
+    done
+    _dc_tmp=$(mktemp "${_dc_file}.XXXXXX" 2>/dev/null) || _dc_tmp="${_dc_file}.tmp.$$"
     _dc_total=$(awk -F'\t' -v sid="${session_id:-unknown}" -v cost="$cost_usd" \
-                    -v now="$(date +%s)" -v out="${_dc_file}.tmp" '
+                    -v now="$(date +%s)" -v out="$_dc_tmp" '
         BEGIN { OFS = "\t"; total = 0; seen = 0 }
         NF >= 4 && $1 == sid {
             base = $2 + 0
@@ -2797,7 +2887,12 @@ if { [ "$cfg_show_today" = "1" ] || [ "$cfg_show_week" = "1" ]; } && is_num "$co
             if (!seen) print sid, cost, cost, now > out
             printf "%.2f", total
         }' "$_dc_file" 2>/dev/null)
-    mv "${_dc_file}.tmp" "$_dc_file" 2>/dev/null
+    if [ -s "$_dc_tmp" ]; then
+        mv "$_dc_tmp" "$_dc_file" 2>/dev/null || rm -f "$_dc_tmp"
+    else
+        rm -f "$_dc_tmp"
+    fi
+    [ "$_dc_locked" -eq 1 ] && rmdir "$_dc_lock" 2>/dev/null
     if [ "$cfg_show_today" = "1" ] && is_num "$_dc_total"; then
         seg_today="$(muted "$L_TODAY") ${C_ACCENT}\$${_dc_total}${RESET}"
     fi

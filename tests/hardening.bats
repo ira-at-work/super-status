@@ -578,3 +578,123 @@ PY
     run_statusline '{"model":{"display_name":"Opus"},"workspace":{"project_dir":"/a/b"},"session_name":"moved"}'
     [[ "$(strip_ansi "$output")" == *"“moved”"* ]]
 }
+
+# --- repo-planted git helpers -------------------------------------------------
+
+@test "a repository's own fsmonitor and filter commands never run" {
+    repo="$BATS_TEST_TMPDIR/hostile-repo"
+    marker="$BATS_TEST_TMPDIR/pwned"
+    mkdir -p "$repo"
+    git -C "$repo" init -q -b main
+    git -C "$repo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+    printf '#!/bin/sh\ntouch "%s"\ncat\n' "$marker" > "$BATS_TEST_TMPDIR/evil.sh"
+    chmod +x "$BATS_TEST_TMPDIR/evil.sh"
+    git -C "$repo" config core.fsmonitor "$BATS_TEST_TMPDIR/evil.sh"
+    git -C "$repo" config filter.evil.clean "$BATS_TEST_TMPDIR/evil.sh"
+    git -C "$repo" config filter.evil.required true
+    echo '* filter=evil' > "$repo/.gitattributes"
+    echo x > "$repo/file.txt"
+    write_config '{"preset":"full","display":{"lines_changed":true}}'
+    payload="{\"model\":{\"display_name\":\"Opus\"},\"session_id\":\"g1\",\"cwd\":\"$repo\",\"workspace\":{\"project_dir\":\"$repo\"}}"
+    run_statusline "$payload"
+    [ "$status" -eq 0 ]
+    [[ "$(strip_ansi "$output")" == *":main*"* ]] || false
+    [ ! -e "$marker" ]
+}
+
+@test "git_safe_init blanks only drivers defined outside global and system config" {
+    repo="$BATS_TEST_TMPDIR/filters"
+    mkdir -p "$repo"
+    git -C "$repo" init -q
+    git config --global filter.trusted.clean "trusted-cmd"
+    git -C "$repo" config filter.evil.clean "evil-cmd"
+    git -C "$repo" config filter.dot.ted.process "evil-cmd"
+    git_safe_init "$repo"
+    joined=" ${GIT_SAFE_ARGS[*]} "
+    [[ "$joined" == *" filter.evil.clean= "* ]] || false
+    [[ "$joined" == *" filter.dot.ted.process= "* ]] || false
+    [[ "$joined" != *"trusted"* ]] || false
+}
+
+# --- background agents --------------------------------------------------------
+
+write_background_transcript() { # $1 = path
+    python3 - "$1" <<'PY'
+import json, sys
+def launch(tool_id, desc):
+    return [
+      {"type": "assistant", "timestamp": "2026-10-16T10:00:00Z",
+       "message": {"role": "assistant", "content": [
+         {"type": "tool_use", "id": tool_id, "name": "Agent",
+          "input": {"description": desc, "subagent_type": "reviewer", "run_in_background": True}}]}},
+      {"type": "user", "timestamp": "2026-10-16T10:00:01Z",
+       "toolUseResult": {"isAsync": True, "status": "async_launched", "agentId": "agent-" + tool_id},
+       "message": {"role": "user", "content": [
+         {"type": "tool_result", "tool_use_id": tool_id, "content": "launched"}]}},
+    ]
+rows = launch("t1", "Queue done") + launch("t2", "Attachment done") + launch("t3", "Still going")
+rows.append({"type": "queue-operation", "operation": "enqueue", "timestamp": "2026-10-16T10:05:00Z",
+             "content": "<task-notification>\n<task-id>agent-t1</task-id>\n<tool-use-id>t1</tool-use-id>\n<status>completed</status>\n</task-notification>"})
+rows.append({"type": "attachment", "timestamp": "2026-10-16T10:06:00Z",
+             "attachment": {"type": "queued_command",
+                            "prompt": "<task-notification>\n<task-id>agent-t2</task-id>\n<status>completed</status>\n</task-notification>"}})
+with open(sys.argv[1], "w") as f:
+    for row in rows:
+        f.write(json.dumps(row) + "\n")
+PY
+}
+
+@test "a background agent leaves the agents line once its completion notice lands" {
+    transcript="$BATS_TEST_TMPDIR/background.jsonl"
+    write_background_transcript "$transcript"
+    write_config '{"display":{"agents":true}}'
+    run_statusline "{\"model\":{\"display_name\":\"Opus\"},\"session_id\":\"b1\",\"transcript_path\":\"$transcript\",\"workspace\":{\"project_dir\":\"/a/b\"}}"
+    [ "$status" -eq 0 ]
+    plain=$(strip_ansi "$output")
+    [[ "$plain" == *"Still going"* ]] || false
+    [[ "$plain" != *"Queue done"* ]] || false
+    [[ "$plain" != *"Attachment done"* ]] || false
+}
+
+# --- concurrent day ledger ------------------------------------------------------
+
+@test "parallel sessions updating the day ledger all keep their row" {
+    write_config '{"display":{"today":true}}'
+    ledger="$XDG_CACHE_HOME/super-status/daily-cost/$(date +%Y-%m-%d).tsv"
+    for round in 1 2 3; do
+        for sid in a b c d e f; do
+            printf '{"model":{"display_name":"Opus"},"session_id":"%s","workspace":{"project_dir":"/a/b"},"cost":{"total_cost_usd":%s}}' \
+                "$sid" "$round" | bash "$SCRIPT" >/dev/null &
+        done
+        wait
+    done
+    [ "$(cut -f1 "$ledger" | sort -u | wc -l | tr -d ' ')" -eq 6 ]
+    [ ! -d "$ledger.lock" ]
+}
+
+@test "a stale day-ledger lock left by a killed render is reclaimed" {
+    write_config '{"display":{"today":true}}'
+    ledger="$XDG_CACHE_HOME/super-status/daily-cost/$(date +%Y-%m-%d).tsv"
+    mkdir -p "$ledger.lock"
+    touch -t 202001010000 "$ledger.lock"
+    run_statusline '{"model":{"display_name":"Opus"},"session_id":"s1","workspace":{"project_dir":"/a/b"},"cost":{"total_cost_usd":1}}'
+    grep -q '^s1' "$ledger"
+    [ ! -d "$ledger.lock" ]
+}
+
+# --- bounded stdin ----------------------------------------------------------------
+
+@test "stdin arriving in slow chunks is read whole" {
+    run bash -c '{ printf "{\"model\":"; sleep 0.3; printf "{\"display_name\":\"Opus\"}}\n"; } | bash "$1"' _ "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [[ "$(strip_ansi "$output")" == *"Opus"* ]] || false
+}
+
+@test "a writer that never closes stdin does not hold the render" {
+    start=$SECONDS
+    { printf '{"model":{"display_name":"Opus"}}\n'; sleep 6; } | bash "$SCRIPT" > "$BATS_TEST_TMPDIR/out" &
+    renderer=$!
+    while kill -0 "$renderer" 2>/dev/null && [ $(( SECONDS - start )) -lt 5 ]; do sleep 0.2; done
+    [ $(( SECONDS - start )) -lt 5 ]
+    [[ "$(strip_ansi "$(cat "$BATS_TEST_TMPDIR/out")")" == *"Opus"* ]] || false
+}
