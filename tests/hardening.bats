@@ -551,6 +551,15 @@ PY
     [[ "$(strip_ansi "$output")" == *"40% ▲"* ]]
 }
 
+@test "usage_pace colors only the marker, never the bar's percentage" {
+    now=$(date +%s)
+    payload="{\"model\":{\"display_name\":\"Opus\"},\"workspace\":{\"project_dir\":\"/a/b\"},\"rate_limits\":{\"five_hour\":{\"used_percentage\":18,\"resets_at\":$(( now + 16500 ))},\"seven_day\":{\"used_percentage\":1,\"resets_at\":$(( now + 500000 ))}}}"
+    write_config '{"display":{"usage_pace":true}}'
+    run_statusline "$payload"
+    [[ "$output" == *"${RED}▲"* ]]
+    [[ "$output" != *"${RED}18%"* ]]
+}
+
 @test "a spend_limit window renders a third Sessions bar only when sent" {
     now=$(date +%s)
     limits="\"five_hour\":{\"used_percentage\":10,\"resets_at\":$(( now + 3600 ))},\"seven_day\":{\"used_percentage\":10,\"resets_at\":$(( now + 500000 ))}"

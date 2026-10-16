@@ -2513,17 +2513,16 @@ if [ "$IS_SUBSCRIPTION" -eq 1 ] && [ "$cfg_show_sessions" = "1" ]; then
     five_color=$(usage_color "$five_pct" "$cfg_5h_warn" "$cfg_5h_crit")
     seven_color=$(usage_color "$seven_pct" "$cfg_7d_warn" "$cfg_7d_crit")
 
-    # Usage pace only ever escalates a bar's color, never calms it.
+    # Pace colors only the marker: a projection early in a window swings wildly,
+    # and the bar's color must keep matching the percentage it sits next to.
     five_pace_mark=""; seven_pace_mark=""
     if [ "$cfg_show_usage_pace" = "1" ]; then
         _pace_color=$(pace_color "$(usage_pace_pct "$five_pct" "$five_reset" 18000)")
         if [ -n "$_pace_color" ]; then
-            [ "$five_color" = "$RED" ] || five_color="$_pace_color"
             five_pace_mark=" ${_pace_color}${L_PACE}${RESET}"
         fi
         _pace_color=$(pace_color "$(usage_pace_pct "$seven_pct" "$seven_reset" 604800)")
         if [ -n "$_pace_color" ]; then
-            [ "$seven_color" = "$RED" ] || seven_color="$_pace_color"
             seven_pace_mark=" ${_pace_color}${L_PACE}${RESET}"
         fi
     fi
