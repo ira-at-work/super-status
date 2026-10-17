@@ -939,7 +939,7 @@ git_safe_init() { # $1 = git root
         _key="${_entry%%$'\n'*}"
         _name="${_key#filter.}"
         _name="${_name%.*}"
-        [ -n "$_name" ] && [ "$_name" != "$_key" ] || continue
+        if [ -z "$_name" ] || [ "$_name" = "$_key" ]; then continue; fi
         [[ "$_seen" == *$'\n'"$_name"$'\n'* ]] && continue
         _seen+="$_name"$'\n'
         GIT_SAFE_ARGS+=(-c "filter.${_name}.clean=" -c "filter.${_name}.smudge=" \
