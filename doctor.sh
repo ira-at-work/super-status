@@ -82,8 +82,10 @@ echo "Backed up existing settings.json before patching."
 # Written back with `cat >` rather than `mv`: a settings.json that is a symlink
 # (a dotfiles repo) stays a link, and the file keeps its own permissions.
 # An existing refreshInterval is preserved; 2s is the recommended default.
+# MSYS2_ARG_CONV_EXCL stops Git Bash on Windows rewriting the POSIX paths in
+# $cmd into C:/... form when it hands them to a native jq.exe.
 tmp=$(mktemp)
-jq --arg cmd "$EXPECTED_CMD" \
+MSYS2_ARG_CONV_EXCL='*' jq --arg cmd "$EXPECTED_CMD" \
    '.statusLine = {"type": "command", "command": $cmd, "refreshInterval": (.statusLine.refreshInterval // 2)}' \
    "$SETTINGS" > "$tmp" && cat "$tmp" > "$SETTINGS"
 rm -f "$tmp"
@@ -103,7 +105,7 @@ if [ -d "$AGY_DIR" ] || [ -f "$AGY_SETTINGS" ] || command -v agy >/dev/null 2>&1
     else
         cp "$AGY_SETTINGS" "${AGY_SETTINGS}.bak.$(date +%s)"
         tmp=$(mktemp)
-        jq --arg cmd "$EXPECTED_CMD" '.statusLine = {"command": $cmd, "enabled": true}' \
+        MSYS2_ARG_CONV_EXCL='*' jq --arg cmd "$EXPECTED_CMD" '.statusLine = {"command": $cmd, "enabled": true}' \
             "$AGY_SETTINGS" > "$tmp" && cat "$tmp" > "$AGY_SETTINGS"
         rm -f "$tmp"
         echo "✓ Patched statusLine in Antigravity CLI settings.json."
