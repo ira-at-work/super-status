@@ -19,11 +19,14 @@ install_script() { # $1 = config folder
     echo '{"theme":"dark"}' > "$target"
     chmod 644 "$target"
     ln -s "$target" "$HOME/.claude/settings.json"
+    # Git Bash without developer mode makes `ln -s` copy the file instead.
+    [ -L "$HOME/.claude/settings.json" ] || skip "ln -s cannot create symlinks here"
 
     run bash "$REPO_ROOT/doctor.sh"
     [ "$status" -eq 0 ]
     [ -L "$HOME/.claude/settings.json" ]
-    perms=$(stat -f %Lp "$target" 2>/dev/null || stat -c %a "$target")
+    # GNU first: GNU `stat -f` means filesystem status and succeeds with junk.
+    perms=$(stat -c %a "$target" 2>/dev/null || stat -f %Lp "$target")
     [ "$perms" = "644" ]
     [ "$(jq -r '.statusLine.command' "$target")" = "/bin/bash $HOME/.claude/super-status/statusline.sh" ]
     [ "$(jq -r '.theme' "$target")" = "dark" ]

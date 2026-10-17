@@ -525,8 +525,8 @@ PY
     [[ "$(strip_ansi "$output")" != *"fix-auth"* ]]
     write_config '{"display":{"session_name":true}}'
     run_statusline "$payload"
-    [[ "$output" != *$'\033[31m'* ]]
-    [[ "$(strip_ansi "$output")" == *"“fix-auth"* ]]
+    # The segment is checked raw: other segments (lines_changed) are red legitimately.
+    [[ "$output" == *"“fix-auth”"* ]]
 }
 
 # --- usage pace and spend limit ---------------------------------------------
