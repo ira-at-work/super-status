@@ -38,6 +38,8 @@ install_script() { # $1 = config folder
 
     run bash "$REPO_ROOT/doctor.sh"
     [ "$status" -eq 0 ]
+    echo "doctor output: $output"
+    jq -r '.statusLine.command' "$CLAUDE_CONFIG_DIR/settings.json" | od -c
     [ "$(jq -r '.statusLine.command' "$CLAUDE_CONFIG_DIR/settings.json")" = "/bin/bash $CLAUDE_CONFIG_DIR/super-status/statusline.sh" ]
     [ ! -f "$HOME/.claude/settings.json" ]
 }
