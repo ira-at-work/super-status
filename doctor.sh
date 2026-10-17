@@ -61,8 +61,10 @@ if [ ! -f "$SETTINGS" ]; then
     echo '{}' > "$SETTINGS"
 fi
 
-current_cmd=$(jq -r '.statusLine.command // empty' "$SETTINGS" 2>/dev/null)
-current_interval=$(jq -r '.statusLine.refreshInterval // empty' "$SETTINGS" 2>/dev/null)
+# A native jq.exe under Git Bash ends each line with CRLF; strip the \r so the
+# comparisons below can match on Windows.
+current_cmd=$(jq -r '.statusLine.command // empty' "$SETTINGS" 2>/dev/null | tr -d '\r')
+current_interval=$(jq -r '.statusLine.refreshInterval // empty' "$SETTINGS" 2>/dev/null | tr -d '\r')
 
 if [ "$current_cmd" = "$EXPECTED_CMD" ] && [ -n "$current_interval" ]; then
     echo "✓ settings.json already points at super-status (refreshInterval: ${current_interval}s). Nothing to do."
@@ -83,11 +85,17 @@ echo "Backed up existing settings.json before patching."
 # (a dotfiles repo) stays a link, and the file keeps its own permissions.
 # An existing refreshInterval is preserved; 2s is the recommended default.
 # MSYS2_ARG_CONV_EXCL stops Git Bash on Windows rewriting the POSIX paths in
-# $cmd into C:/... form when it hands them to a native jq.exe.
+# $cmd into C:/... form for a native jq.exe. It disables conversion for every
+# argument, so the file goes in on stdin rather than as a path jq.exe can't open.
 tmp=$(mktemp)
-MSYS2_ARG_CONV_EXCL='*' jq --arg cmd "$EXPECTED_CMD" \
+if ! MSYS2_ARG_CONV_EXCL='*' jq --arg cmd "$EXPECTED_CMD" \
    '.statusLine = {"type": "command", "command": $cmd, "refreshInterval": (.statusLine.refreshInterval // 2)}' \
-   "$SETTINGS" > "$tmp" && cat "$tmp" > "$SETTINGS"
+   < "$SETTINGS" > "$tmp"; then
+    rm -f "$tmp"
+    echo "✗ Could not patch $SETTINGS — jq failed; the backup is untouched next to it."
+    exit 1
+fi
+cat "$tmp" > "$SETTINGS"
 rm -f "$tmp"
 
 echo "✓ Re-patched statusLine in $SETTINGS to point at super-status."
@@ -99,14 +107,19 @@ AGY_SETTINGS="$AGY_DIR/settings.json"
 if [ -d "$AGY_DIR" ] || [ -f "$AGY_SETTINGS" ] || command -v agy >/dev/null 2>&1; then
     mkdir -p "$AGY_DIR"
     [ ! -f "$AGY_SETTINGS" ] && echo '{}' > "$AGY_SETTINGS"
-    agy_cmd=$(jq -r '.statusLine.command // empty' "$AGY_SETTINGS" 2>/dev/null)
+    agy_cmd=$(jq -r '.statusLine.command // empty' "$AGY_SETTINGS" 2>/dev/null | tr -d '\r')
     if [ "$agy_cmd" = "$EXPECTED_CMD" ] || [ "$agy_cmd" = "$SCRIPT_PATH" ]; then
         echo "✓ Antigravity CLI settings.json already points at super-status."
     else
         cp "$AGY_SETTINGS" "${AGY_SETTINGS}.bak.$(date +%s)"
         tmp=$(mktemp)
-        MSYS2_ARG_CONV_EXCL='*' jq --arg cmd "$EXPECTED_CMD" '.statusLine = {"command": $cmd, "enabled": true}' \
-            "$AGY_SETTINGS" > "$tmp" && cat "$tmp" > "$AGY_SETTINGS"
+        if ! MSYS2_ARG_CONV_EXCL='*' jq --arg cmd "$EXPECTED_CMD" '.statusLine = {"command": $cmd, "enabled": true}' \
+            < "$AGY_SETTINGS" > "$tmp"; then
+            rm -f "$tmp"
+            echo "✗ Could not patch $AGY_SETTINGS — jq failed; the backup is untouched next to it."
+            exit 1
+        fi
+        cat "$tmp" > "$AGY_SETTINGS"
         rm -f "$tmp"
         echo "✓ Patched statusLine in Antigravity CLI settings.json."
     fi
