@@ -33,3 +33,12 @@ scripts/save.sh <plain description of the change>
 ```
 
 Never edit `versions/<year>.md` by hand — it is hook-maintained.
+
+## Live install sync
+
+The post-commit, post-merge and post-rewrite hooks run `scripts/sync-local.sh`,
+which copies HEAD's `statusline.sh` and `doctor.sh` into
+`${CLAUDE_CONFIG_DIR:-~/.claude}/super-status/`. The statusline in use therefore
+always matches the last commit. Uncommitted edits never go live, and
+`settings.json` is not touched. `.git/hooks/` is untracked, so a fresh clone has
+to re-add those hook lines by hand.
