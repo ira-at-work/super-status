@@ -1,6 +1,7 @@
 # Run with prek (https://github.com/j178/prek) or pre-commit:
 #   prek run --all-files          # everything that gates commits
 #   prek run --all-files --hook-stage manual shfmt   # formatting report
+#   prek install # add a permanent pre-commit hook for your clone of the repo
 # Hooks are `language: system` so they use the same shellcheck/bats/shfmt as CI
 # (see .github/workflows/ci.yml) instead of pinned downloads.
 repos:
